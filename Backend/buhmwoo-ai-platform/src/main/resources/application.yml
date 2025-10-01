@@ -1,0 +1,53 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    # ✅ Boot AutoConfig 충돌 방지용 더미 (필수)
+    driver-class-name: org.mariadb.jdbc.Driver
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate.format_sql: true
+      hibernate.jdbc.time_zone: Asia/Seoul
+    show-sql: false
+
+logging:
+  level:
+    com.buhmwoo.oneask: DEBUG
+
+custom:
+  db:
+    maria:
+      host: 192.168.1.52
+      port: 3306
+      username: BW2025
+      password: bWo#@0328*^%^
+      dbname: bw_oneask
+    oracle:
+      host: 192.168.1.18
+      port: 1521
+      service: BWMS
+      username: BWMS
+      password: Wror_^%#^_0920
+    sybase:
+      bwerpe:
+        host: 192.168.1.1
+        port: 7000
+        dbname: BWERPE
+        username: BWERP
+        password: Bsyb_^$=(_0920
+      bwerpl:
+        host: 192.168.1.1
+        port: 7000
+        dbname: BWERPL
+        username: BWERP
+        password: Bsyb_^$=(_0920
+
+# src/main/resources/application.yml
+oneask:
+  storage:
+    # 로컬 개발(윈도우)에서 쓰던 경로는 여기에 설정하고, 컨테이너에선 환경변수로 /shared/documents 주입됨
+    root: ${STORAGE_ROOT:/shared/documents}
+  rag:
+    backend-url: ${RAG_BACKEND_URL:http://rag-backend:8000}
+

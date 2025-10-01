@@ -1,0 +1,16 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart
+pymupdf
+python-docx
+python-pptx
+openpyxl
+chromadb==0.5.*
+langchain==0.3.*
+langchain-core==0.3.*
+langchain-community==0.3.*
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0
+charset-normalizer>=3.3
+# 선택
+langchain-openai>=0.2
