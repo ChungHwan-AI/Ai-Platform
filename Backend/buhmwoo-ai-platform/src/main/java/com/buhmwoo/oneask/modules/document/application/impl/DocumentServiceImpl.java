@@ -91,7 +91,18 @@ public class DocumentServiceImpl {
             Path target = root.resolve(storedName).normalize();
             Files.createDirectories(target.getParent());
             long size = file.getSize();
-            log.info("[UPLOAD] start copy -> target={} size={} CT={}", target, size, file.getContentType());
+            
+            String rawContentType = Optional.ofNullable(file.getContentType())
+                    .map(String::trim)
+                    .orElse(null);
+            String contentType = (rawContentType == null || rawContentType.isBlank())
+                    ? MediaType.APPLICATION_OCTET_STREAM_VALUE
+                    : rawContentType;
+            if (contentType.length() > 100) {
+                contentType = contentType.substring(0, 100);
+            }
+
+            log.info("[UPLOAD] start copy -> target={} size={} CT={}", target, size, contentType);
 
             try (InputStream in = file.getInputStream()) {
                 Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
@@ -107,7 +118,7 @@ public class DocumentServiceImpl {
                     .uuid(uuid)
                     .fileName(safeName)
                     .filePath(target.toString().replace("\\", "/"))
-                    .contentType(file.getContentType())
+                    .contentType(contentType)
                     .size(size)
                     .uploadedBy(uploadedBy)
                     .uploadedAt(LocalDateTime.now())
@@ -128,6 +139,8 @@ public class DocumentServiceImpl {
                     mb.part("file", new FileSystemResource(target.toFile()))
                       .filename(safeName)
                       .contentType(MediaType.APPLICATION_OCTET_STREAM);
+                    mb.part("docId", uuid)
+                      .contentType(MediaType.TEXT_PLAIN);
 
                     webClient.post()
                         .uri(url)
@@ -193,12 +206,19 @@ public class DocumentServiceImpl {
         try {
             String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
             if (ragBase.isBlank()) return ApiResponseDto.fail("질의 실패: custom.rag.backend-url 이 비었습니다.");
+            
+            System.out.println("[DEBUG] RAG Base URL: " + ragBase);  // ← 로그 추가
 
             String url = ragBase + "/query";
+
+            System.out.println("[DEBUG] Full URL: " + url);  // ← 로그 추가
+
             Map<String, Object> req = new HashMap<>();
             req.put("question", question);
             req.put("docId", uuid);
             req.put("top_k", 3);
+            
+            System.out.println("[DEBUG] Request body: " + req);  // ← 로그 추가
 
             String answer = webClient.post()
                     .uri(url)
@@ -206,9 +226,10 @@ public class DocumentServiceImpl {
                     .bodyValue(req)
                     .retrieve()
                     .bodyToMono(Map.class)
+                    .doOnError(e -> System.err.println("[ERROR] WebClient error: " + e.getMessage()))  // ← 에러 로그
                     .map(m -> String.valueOf(m.get("answer")))
                     .block(Duration.ofSeconds(120));
-
+                 
             if (answer == null) return ApiResponseDto.fail("응답 실패: answer 없음");
             return ApiResponseDto.ok(answer, "응답 성공");
 

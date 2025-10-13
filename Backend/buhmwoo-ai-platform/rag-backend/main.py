@@ -1,13 +1,170 @@
 # main.py
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from pathlib import Path
-from typing import List
-from langchain_core.documents import Document
+# 표준 로깅 사용을 위한 import
+import logging
 
-from config_chroma import get_vectordb, CHROMA_DIR, CHROMA_COLLECTION
-from config_embed import get_embedding_fn
-from utils.encoding import to_utf8_text
-from admin_router import router as admin_router
+import os  # LLM 공급자와 키 등 환경 변수 접근을 위해 os 모듈을 임포트함
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form  # 업로드 엔드포인트에서 폼 필드와 파일을 다루기 위해 FastAPI 관련 클래스를 임포트함
+
+from fastapi import Body  # 쿼리 입력을 파싱하기 위한 Body 헬퍼
+
+from dotenv import load_dotenv  # .env 파일을 읽어오기 위한 함수 임포트
+from pathlib import Path  # 업로드 파일 저장 경로를 다루기 위해 Path 클래스를 임포트함
+from typing import List, Optional, Dict, Any  # 타입 힌트를 명확히 하기 위해 필요한 제네릭 타입들을 임포트함
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices  # 요청/응답 스키마 정의를 위해 Pydantic 유틸리티를 임포트함
+from langchain_core.documents import Document  # 청크를 LangChain Document 형태로 저장하기 위해 Document 클래스를 임포트함
+
+from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성을 위한 도구
+from langchain_openai import ChatOpenAI  # OpenAI 호출을 위한 LangChain 래퍼
+from pydantic import BaseModel  # 요청 유효성 검증용 모델
+
+from config_chroma import get_vectordb, CHROMA_DIR, CHROMA_COLLECTION  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
+from config_embed import get_embedding_fn  # 임베딩 함수를 가져오기 위해 임포트함
+from utils.encoding import to_utf8_text  # 텍스트 인코딩을 UTF-8로 정규화하기 위해 임포트함
+from admin_router import router as admin_router  # 관리자용 라우터를 메인 앱에 포함시키기 위해 임포트함
+
+from pydantic import BaseModel
+from rag_service import query_text
+
+
+# 모듈 전역 로거
+logger = logging.getLogger(__name__)
+
+# Uvicorn 및 루트 로거가 INFO 이상으로 출력되도록 보정
+if not logging.getLogger().handlers:
+    # 기본 핸들러가 없을 때만 기본 설정을 적용
+    logging.basicConfig(level=logging.INFO)
+# Uvicorn 런타임 로그 레벨을 명시적으로 INFO로 맞춤
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+
+class QueryRequest(BaseModel):
+    """/query 요청 스키마 정의"""
+
+    # 사용자의 자연어 질문 텍스트를 입력받는 필드
+    question: str = Field(..., description="사용자가 던진 질문 문장")
+    # 필요시 특정 문서(UUID 등)로 검색 범위를 제한하기 위한 필드
+    doc_id: Optional[str] = Field(
+        default=None,
+        description="벡터 검색 대상을 제한할 문서 ID (선택)",
+        alias="docId",
+        validation_alias=AliasChoices("docId", "doc_id"),
+    )
+    # 벡터 검색에서 가져올 상위 청크 개수를 제어하는 필드
+    top_k: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+        description="벡터 검색으로 가져올 상위 청크 개수",
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        # Swagger 문서에 샘플 요청을 노출하기 위한 설정
+        json_schema_extra={
+            "examples": [
+                {
+                    "question": "이번 분기 생산 목표는 어떻게 되나요?",
+                    "docId": "123e4567-e89b-12d3-a456-426614174000",
+                    "top_k": 3,
+                }
+            ]
+        }
+    )
+
+
+class Match(BaseModel):
+    """벡터 검색 결과 청크 정보를 담는 스키마"""
+
+    # 청크의 실제 본문 텍스트를 그대로 노출
+    content: str = Field(..., description="검색된 청크 본문")
+    # 추후 출처, 페이지 등의 메타데이터를 전달하기 위한 필드
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="청크에 연결된 메타데이터",
+    )
+
+
+class QueryResponse(BaseModel):
+    """/query 응답 스키마 정의"""
+
+    # LLM이 최종적으로 생성한 답변 텍스트를 담는 필드
+    answer: str = Field(..., description="LLM이 생성한 최종 응답")
+    # 참고용으로 검색된 청크 목록을 그대로 반환
+    matches: List[Match] = Field(
+        default_factory=list,
+        description="벡터 검색으로 선택된 청크 목록",
+    )
+
+
+def _build_prompt(question: str, docs: List[Document]) -> str:
+    """질문과 검색된 청크들을 하나의 프롬프트 텍스트로 변환"""
+
+    # 각 청크에 번호를 붙여 출처와 본문을 함께 구성
+    context_blocks: List[str] = []
+    for idx, doc in enumerate(docs, start=1):
+        meta = doc.metadata or {}
+        # 사람이 출처를 파악할 수 있도록 가능한 메타 필드를 함께 표기
+        source = meta.get("source") or meta.get("docId") or "unknown"
+        page = meta.get("page")
+        header = f"[청크 {idx}] 출처: {source}"
+        if page is not None:
+            header += f" | 페이지: {page}"
+        block = f"{header}\n{doc.page_content.strip()}"
+        context_blocks.append(block)
+
+    if not context_blocks:
+        # 검색된 청크가 없을 때는 안내 메시지를 포함하여 LLM이 상황을 인지하도록 유도
+        context_blocks.append("(참고할 문서를 찾지 못했습니다.)")
+
+    context_text = "\n\n".join(context_blocks)
+
+    # 시스템 지침에 가까운 안내문으로 답변 톤과 형식을 제한
+    prompt = (
+        "당신은 사내 문서를 바탕으로 답을 제공하는 한국어 도우미입니다."
+        "\n주어진 문서 내용을 벗어난 추측은 피하고, 근거가 없으면 솔직하게 모른다고 답변하세요."
+        "\n\n[질문]\n"
+        f"{question.strip()}"
+        "\n\n[참고 문서]\n"
+        f"{context_text}"
+        "\n\n위 자료를 참고해 간결하고 핵심적인 답변을 작성하세요."
+    )
+    return prompt
+
+
+def _generate_answer(question: str, docs: List[Document]) -> str:
+    """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
+
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()  # 기본 LLM 공급자를 openai로 설정함
+    prompt = _build_prompt(question, docs)  # 검색된 청크와 질문으로 최종 프롬프트를 생성함
+
+    if provider == "openai":
+        # OpenAI 키가 없으면 즉시 오류를 발생시켜 클라이언트가 설정을 점검하도록 유도
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY가 설정되어 있지 않습니다.")
+
+        from langchain_openai import ChatOpenAI  # 지연 임포트로 선택적 의존성 관리를 수행함
+
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        base_url = os.getenv("OPENAI_BASE_URL")
+        try:
+            # 잘못된 입력으로 인한 예외를 방지하기 위해 수치 변환 시 예외를 처리함
+            temperature = float(os.getenv("OPENAI_CHAT_TEMPERATURE", "0.2"))
+        except ValueError:
+            temperature = 0.2
+
+        # 실제 LLM 호출 객체를 생성 (base_url 은 선택적으로 주입)
+        llm_kwargs: Dict[str, Any] = {"model": model, "temperature": temperature, "api_key": api_key}
+        if base_url:
+            llm_kwargs["base_url"] = base_url
+
+        llm = ChatOpenAI(**llm_kwargs)
+        response = llm.invoke(prompt)
+        return (response.content or "").strip() or "답변을 생성하지 못했습니다."
+
+    # 현재는 OpenAI 만 지원하므로 다른 공급자가 들어오면 명시적으로 오류 반환
+    raise HTTPException(status_code=500, detail=f"지원하지 않는 LLM_PROVIDER: {provider}")
+
 
 # -----------------------------
 # 파일별 텍스트 추출 유틸
@@ -18,6 +175,7 @@ def _extract_text_txt_like_bytes(content: bytes) -> str:
 
 def _extract_text_pdf(path: Path) -> str:
     import fitz  # PyMuPDF
+
     out = []
     with fitz.open(str(path)) as pdf:
         for page in pdf:
@@ -26,6 +184,7 @@ def _extract_text_pdf(path: Path) -> str:
 
 def _extract_text_docx(path: Path) -> str:
     from docx import Document as Docx
+
     d = Docx(str(path))
     return "\n".join([p.text for p in d.paragraphs])
 
@@ -80,7 +239,11 @@ def _extract_text_pptx(path: Path) -> str:
         # 노트
         try:
             if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
-                notes_texts = [p.text for p in slide.notes_slide.notes_text_frame.paragraphs if p.text and p.text.strip()]
+                notes_texts = [
+                    p.text
+                    for p in slide.notes_slide.notes_text_frame.paragraphs
+                    if p.text and p.text.strip()
+                ]
                 if notes_texts:
                     slide_buf.append("[Notes]")
                     slide_buf.append("\n".join(notes_texts))
@@ -144,11 +307,17 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 160) -> List[str
 # -----------------------------
 # FastAPI
 # -----------------------------
+# 서버 시작 시 .env를 메모리로 불러오려는 목적
+load_dotenv()
+
 app = FastAPI()
 app.include_router(admin_router)
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(
+    file: UploadFile = File(...),  # 업로드된 파일을 그대로 유지함
+    doc_id: Optional[str] = Form(default=None, alias="docId"),  # 업로드 요청에서 문서 ID를 선택적으로 받아 alias를 지정함
+):
     try:
         # 1) 업로드 파일 저장 (절대경로 고정)
         uploads_dir = (Path(__file__).parent / "uploads").resolve()
@@ -178,17 +347,21 @@ async def upload(file: UploadFile = File(...)):
         emb = get_embedding_fn()
         vectordb = get_vectordb(emb)
 
-        docs = [
-            Document(
-                page_content=c,
-                metadata={
-                    "source": file.filename,
-                    "doctype": ext[1:],
-                    "chunk_index": i,
-                },
-            )
-            for i, c in enumerate(chunks)
-        ]
+        docs: List[Document] = []
+        for i, c in enumerate(chunks):
+            metadata = {
+                "source": file.filename,
+                "doctype": ext[1:],
+                "chunk_index": i,
+            }
+            if doc_id:
+                metadata["docId"] = doc_id
+            docs.append(
+                Document(
+                    page_content=c,
+                    metadata=metadata,
+                )        
+            )                    
 
         # 디버그: add/persist 전후 카운트
         try:
@@ -220,6 +393,7 @@ async def upload(file: UploadFile = File(...)):
             "count_before": count_before,
             "count_after": count_after,
             "view": "/admin/rag/view?limit=50&offset=0",
+             "docId": doc_id,  # 응답에 실제 저장된 docId 값을 포함해 호출자가 확인하도록 함
         }
 
     except HTTPException:
@@ -228,3 +402,48 @@ async def upload(file: UploadFile = File(...)):
         # 숨은 예외(임베딩/HF 다운로드/의존성 등) 표면화
         print(f"[ERROR] ingest failed: {e}")
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
+
+# 문서 관련 질의 응답 
+@app.post(
+    "/query",
+    response_model=QueryResponse,
+    summary="벡터 검색 + LLM 기반 답변",
+    tags=["rag"],
+)
+async def query(payload: QueryRequest) -> QueryResponse:
+    """문서 검색 후 LLM을 호출하여 최종 답변을 반환"""
+
+    try:
+        # 업로드 시 사용한 임베딩과 동일한 함수를 불러와 일관성을 유지
+        embedding_fn = get_embedding_fn()
+        vectordb = get_vectordb(embedding_fn)
+
+        # docId 가 주어지면 해당 문서 범위에서만 검색하도록 필터를 적용
+        search_kwargs: Dict[str, Any] = {}
+        if payload.doc_id:
+            search_kwargs["filter"] = {"docId": payload.doc_id}
+
+        # LangChain VectorStore 의 similarity_search 를 활용해 상위 청크를 조회
+        docs = vectordb.similarity_search(
+            payload.question,
+            k=payload.top_k,
+            **search_kwargs,
+        )
+
+        # 검색된 청크 정보를 응답에 포함시키기 위해 스키마로 변환
+        matches = [
+            Match(content=doc.page_content, metadata=doc.metadata or {})
+            for doc in docs
+        ]
+
+        # LLM 에 전달할 컨텍스트로 활용하여 최종 답변을 생성
+        answer_text = _generate_answer(payload.question, docs)
+
+        return QueryResponse(answer=answer_text, matches=matches)
+
+    except HTTPException:
+        # 이미 정의된 에러는 그대로 전파
+        raise
+    except Exception as e:
+        # 예기치 못한 오류는 서버 오류로 감싸서 전달
+        raise HTTPException(status_code=500, detail=f"query failed: {e}")

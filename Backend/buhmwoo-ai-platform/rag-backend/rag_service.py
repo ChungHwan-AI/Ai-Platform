@@ -27,8 +27,11 @@ def ingest_texts(texts: List[str], metadatas: List[dict] | None = None) -> int:
     except Exception:
         return -1
 
-def query_text(q: str, k: int = 5):
+def query_text(q: str, k: int = 5, metadata_filter: dict | None = None):
     embedding_fn = get_embedding_fn()
     vectordb = get_vectordb(embedding_fn)
-    retriever = vectordb.as_retriever(search_kwargs={"k": k})
+    search_kwargs = {"k": k}
+    if metadata_filter:
+        search_kwargs["filter"] = metadata_filter
+    retriever = vectordb.as_retriever(search_kwargs=search_kwargs)    
     return retriever.get_relevant_documents(q)

@@ -49,5 +49,5 @@ oneask:
     # 로컬 개발(윈도우)에서 쓰던 경로는 여기에 설정하고, 컨테이너에선 환경변수로 /shared/documents 주입됨
     root: ${STORAGE_ROOT:/shared/documents}
   rag:
-    backend-url: ${RAG_BACKEND_URL:http://rag-backend:8000}
+    backend-url: ${RAG_BACKEND_URL:http://127.0.0.1:8001}
 
