@@ -241,6 +241,64 @@ public class DocumentServiceImpl {
         }
     }
 
+    /** 문서 삭제: 스토리지/DB/RAG 인덱스에서 모두 정리한다. */
+    public ApiResponseDto<Map<String, Object>> deleteDocument(String uuid) {
+        if (uuid == null || uuid.isBlank()) {
+            return ApiResponseDto.fail("문서 삭제 실패: UUID가 비어 있습니다.");
+        }
+
+        var optionalDoc = documentRepository.findByUuid(uuid);
+        if (optionalDoc.isEmpty()) {
+            return ApiResponseDto.fail("문서 삭제 실패: 해당 UUID의 문서를 찾을 수 없습니다.");
+        }
+
+        Document document = optionalDoc.get();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("uuid", uuid);  // 어떤 문서를 삭제했는지 응답에 함께 남긴다.
+        result.put("fileName", document.getFileName());
+
+        // 1) 스토리지에 저장된 원본 파일 삭제
+        try {
+            Path filePath = Paths.get(document.getFilePath());
+            boolean deleted = Files.deleteIfExists(filePath);
+            result.put("storageFilePath", filePath.toString());
+            result.put("storageFileDeleted", deleted);
+        } catch (IOException e) {
+            log.warn("[DELETE] 스토리지 파일 삭제 실패 uuid={} err={}", uuid, e.toString(), e);
+            result.put("storageFileDeleted", false);
+            result.put("storageDeleteError", e.getMessage());
+        }
+
+        // 2) RAG 백엔드에 삭제 요청 (설정이 존재할 때만 호출)
+        String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
+        if (!ragBase.isBlank()) {
+            String url = ragBase + "/documents/delete";
+            Map<String, Object> req = new HashMap<>();
+            req.put("docId", uuid);
+            try {
+                Map<?, ?> ragResponse = webClient.post()
+                        .uri(url)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(req)
+                        .retrieve()
+                        .bodyToMono(Map.class)
+                        .doOnNext(body -> log.info("[RAG] delete response: {}", body))
+                        .block(Duration.ofSeconds(120));
+                result.put("ragResponse", ragResponse);
+            } catch (Exception ex) {
+                log.warn("[RAG] 문서 삭제 요청 실패 uuid={} err={}", uuid, ex.toString(), ex);
+                result.put("ragResponse", Map.of("error", ex.getMessage()));
+            }
+        } else {
+            result.put("ragSkipped", true);  // 설정이 없을 때는 호출을 생략했음을 명시한다.
+        }
+
+        // 3) 데이터베이스 레코드 삭제
+        documentRepository.delete(document);
+
+        return ApiResponseDto.ok(result, "문서 삭제 완료");
+    }
+
     /** 프리뷰용 텍스트 추출 (PDF / PPTX / DOCX) */
     private String extractText(org.springframework.web.multipart.MultipartFile file) {
         String name = file.getOriginalFilename();

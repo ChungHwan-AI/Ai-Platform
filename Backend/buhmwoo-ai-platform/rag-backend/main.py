@@ -16,7 +16,13 @@ from langchain_core.documents import Document  # 청크를 LangChain Document �
 
 from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성을 위한 도구
 from langchain_openai import ChatOpenAI  # OpenAI 호출을 위한 LangChain 래퍼
-from pydantic import BaseModel  # 요청 유효성 검증용 모델
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    AliasChoices,
+    model_validator,
+)  # 요청/응답 스키마 정의 및 유효성 검증 훅 사용을 위해 Pydantic 유틸리티를 임포트함
 
 from config_chroma import (
     get_vectordb,  # 벡터 스토어 핸들을 얻기 위한 함수
@@ -99,7 +105,33 @@ class QueryResponse(BaseModel):
         description="벡터 검색으로 선택된 청크 목록",
     )
 
+# 문서 삭제 요청을 위한 스키마 정의
+class DocDeleteRequest(BaseModel):
+    """벡터 DB에서 삭제할 문서 조건을 표현하는 모델"""
 
+    # 업로드 당시 부여한 문서 UUID. 값이 존재하면 source 보다 우선 적용한다.
+    doc_id: Optional[str] = Field(
+        default=None,
+        alias="docId",
+        description="삭제할 문서의 UUID",
+        validation_alias=AliasChoices("docId", "doc_id"),
+    )
+    # 문서 업로드 시 기록한 원본 파일명. docId 가 없을 때 보조 키로 활용한다.
+    source: Optional[str] = Field(
+        default=None,
+        description="삭제할 문서를 찾기 위한 파일명",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)  # camelCase 요청도 허용하도록 설정한다.
+
+    @model_validator(mode="after")
+    def validate_identifier(cls, values: "DocDeleteRequest") -> "DocDeleteRequest":
+        """docId 와 source 가 모두 비어 있으면 요청 자체를 거부한다."""
+
+        if not (values.doc_id or values.source):
+            raise ValueError("docId 또는 source 중 하나는 반드시 전달되어야 합니다.")
+        return values
+    
 def _build_prompt(question: str, docs: List[Document]) -> str:
     """질문과 검색된 청크들을 하나의 프롬프트 텍스트로 변환"""
 
@@ -350,6 +382,33 @@ async def upload(
         # 4) 벡터DB 업서트 + persist()
         emb = get_embedding_fn()
         vectordb = get_vectordb(emb)  # 업서트 전에 사용할 벡터 DB 핸들을 준비함
+        # 재업로드 시 기존 청크를 정리하기 위한 메타데이터 필터를 구성함
+        deletion_filter = {"docId": doc_id} if doc_id else {"source": file.filename}
+        deleted_chunks = 0  # 삭제된 청크 수를 추적해 중복 제거 여부를 확인하기 위한 카운터
+        try:
+            # 지정된 필터에 해당하는 기존 데이터를 삭제해 재업로드 시 중복을 방지함
+            delete_result = vectordb._collection.delete(where=deletion_filter)
+            if isinstance(delete_result, dict):
+                deleted_chunks = len(delete_result.get("ids") or [])
+            elif isinstance(delete_result, (list, tuple, set)):
+                deleted_chunks = len(delete_result)
+            elif isinstance(delete_result, int):
+                deleted_chunks = delete_result
+            logger.info(
+                "업로드 전 기존 청크 삭제 수행 filter=%s, deleted=%s",
+                deletion_filter,
+                deleted_chunks,
+            )
+        except Exception as delete_exc:
+            # 삭제 과정에서 오류가 발생하면 업로드를 중단하고 클라이언트에게 오류를 알림
+            logger.exception(
+                "기존 청크 삭제 중 오류 발생 filter=%s", deletion_filter
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기존 문서를 삭제하지 못해 업로드를 중단합니다.",
+            ) from delete_exc
+                
         chroma_dir, collection_name = get_chroma_settings()  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 함께 확인함
 
         docs: List[Document] = []
@@ -487,3 +546,65 @@ async def query(payload: QueryRequest) -> QueryResponse:
     except Exception as e:
         # 예기치 못한 오류는 서버 오류로 감싸서 전달
         raise HTTPException(status_code=500, detail=f"query failed: {e}")
+
+@app.post("/documents/delete")
+async def delete_documents(payload: DocDeleteRequest):
+    """문서 UUID 또는 파일명을 기준으로 벡터 DB와 업로드 파일을 정리"""
+
+    try:
+        # 업로드 시점과 동일한 임베딩 설정을 불러와 동일한 컬렉션에 접근한다.
+        embedding_fn = get_embedding_fn()
+        vectordb = get_vectordb(embedding_fn)
+        collection = vectordb._collection  # delete(where=...) 호출을 위해 내부 컬렉션 객체를 그대로 사용한다.
+
+        # docId 가 존재하면 docId 기준으로, 없으면 source 기준으로 where 절을 구성한다.
+        if payload.doc_id:
+            where: Dict[str, Any] = {"docId": payload.doc_id}
+        else:
+            where = {"source": payload.source}
+
+        # 삭제 대상 청크의 메타데이터를 먼저 모아서 삭제 건수와 관련 파일명을 파악한다.
+        matched = collection.get(where=where, include=["metadatas"])
+        matched_ids = matched.get("ids") or []
+        metadatas = matched.get("metadatas") or []
+        sources = {
+            (meta or {}).get("source")
+            for meta in metadatas
+            if meta and (meta.get("source") is not None)
+        }
+
+        # 동일한 where 조건으로 청크를 삭제한다.
+        collection.delete(where=where)
+        vectordb.persist()  # 변경된 상태를 디스크에 즉시 반영해 일관성을 유지한다.
+
+        # 업로드 폴더에 남아있는 원본 파일도 함께 제거한다.
+        uploads_dir = (Path(__file__).parent / "uploads").resolve()
+        file_results: List[Dict[str, Any]] = []
+        for file_name in sorted(s for s in sources if s):
+            target_path = uploads_dir / file_name
+            try:
+                target_path.unlink(missing_ok=True)
+                file_results.append(
+                    {
+                        "file": file_name,
+                        "removed": not target_path.exists(),
+                    }
+                )
+            except Exception as exc:
+                file_results.append(
+                    {
+                        "file": file_name,
+                        "removed": False,
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "deletedChunks": len(matched_ids),
+            "deletedFiles": file_results,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}")

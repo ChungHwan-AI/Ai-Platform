@@ -63,10 +63,15 @@ public class DocumentController {
     }
 
     @Operation(summary = "문서 전체 질문", description = "특정 문서를 지정하지 않고 업로드된 모든 문서를 대상으로 질문에 답합니다.")
-    
+
     @GetMapping("/ask")
     public ApiResponseDto<String> askAll(@RequestParam String question) {
         return documentService.ask(null, question);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
     }
-
+    
+    @Operation(summary = "문서 삭제", description = "UUID를 기준으로 스토리지 및 RAG 인덱스에서 문서를 삭제합니다.")
+    @DeleteMapping("/{uuid}")
+    public ApiResponseDto<Map<String, Object>> deleteDocument(@PathVariable String uuid) {
+        return documentService.deleteDocument(uuid);  // ✅ 서비스 계층에서 스토리지/DB/RAG 삭제를 한 번에 수행하도록 위임합니다.
+    }
 }
