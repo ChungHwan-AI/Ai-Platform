@@ -1,6 +1,6 @@
 import os, argparse, re, sys
 from chromadb import PersistentClient
-from config_chroma import CHROMA_DIR, CHROMA_COLLECTION
+from config_chroma import CHROMA_DIR, get_current_collection_name  # 현재 활성화된 컬렉션 이름을 동적으로 얻기 위해 임포트함
 
 def iter_docs(col, batch=500, include=("metadatas","documents")):
     off = 0
@@ -37,9 +37,10 @@ def main():
     args = ap.parse_args()
 
     cli = PersistentClient(path=CHROMA_DIR)
-    col = cli.get_or_create_collection(CHROMA_COLLECTION)
+    collection_name = get_current_collection_name()  # 임베딩 백엔드 전환 시에도 일관된 컬렉션을 선택한다
+    col = cli.get_or_create_collection(collection_name)  
 
-    print(f"[info] dir={CHROMA_DIR} collection={CHROMA_COLLECTION} total={col.count()} key={args.key}")
+    print(f"[info] dir={CHROMA_DIR} collection={collection_name} total={col.count()} key={args.key}")
 
     if args.list:
         top = list_top_values(col, key=args.key, top=50)

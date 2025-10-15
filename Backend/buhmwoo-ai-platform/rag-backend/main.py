@@ -18,7 +18,11 @@ from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성
 from langchain_openai import ChatOpenAI  # OpenAI 호출을 위한 LangChain 래퍼
 from pydantic import BaseModel  # 요청 유효성 검증용 모델
 
-from config_chroma import get_vectordb, CHROMA_DIR, CHROMA_COLLECTION  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
+from config_chroma import (
+    get_vectordb,  # 벡터 스토어 핸들을 얻기 위한 함수
+    get_chroma_settings,  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 조회하기 위한 헬퍼
+    reset_collection,  # 차원 불일치 발생 시 컬렉션을 초기화하기 위한 헬퍼
+)  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
 from config_embed import get_embedding_fn  # 임베딩 함수를 가져오기 위해 임포트함
 from utils.encoding import to_utf8_text  # 텍스트 인코딩을 UTF-8로 정규화하기 위해 임포트함
 from admin_router import router as admin_router  # 관리자용 라우터를 메인 앱에 포함시키기 위해 임포트함
@@ -325,10 +329,10 @@ async def upload(
         dst = uploads_dir / file.filename
 
         content: bytes = await file.read()
-        # (선택) 20MB 제한
-        max_bytes = 20 * 1024 * 1024
+        # (선택) 50MB 제한
+        max_bytes = 50 * 1024 * 1024
         if len(content) > max_bytes:
-            raise HTTPException(status_code=413, detail=f"파일이 너무 큽니다(최대 20MB). size={len(content)}")
+            raise HTTPException(status_code=413, detail=f"파일이 너무 큽니다(최대 50MB). size={len(content)}")
 
         dst.write_bytes(content)
 
@@ -345,7 +349,8 @@ async def upload(
 
         # 4) 벡터DB 업서트 + persist()
         emb = get_embedding_fn()
-        vectordb = get_vectordb(emb)
+        vectordb = get_vectordb(emb)  # 업서트 전에 사용할 벡터 DB 핸들을 준비함
+        chroma_dir, collection_name = get_chroma_settings()  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 함께 확인함
 
         docs: List[Document] = []
         for i, c in enumerate(chunks):
@@ -369,8 +374,43 @@ async def upload(
         except Exception:
             count_before = None
 
-        vectordb.add_documents(docs)
-        vectordb.persist()
+        try:
+            vectordb.add_documents(docs)  # 준비한 문서 청크들을 벡터 DB에 추가
+            vectordb.persist()  # 디스크에 변경 사항을 영속화
+        except ValueError as err:
+            message = str(err)
+            if "does not match collection dimensionality" in message:
+                hint = (
+                    "임베딩 차원이 기존 Chroma 컬렉션 설정과 맞지 않습니다. "
+                    "새로운 임베딩 모델을 사용할 때는 `python wipe_chroma.py`로 "
+                    "기존 컬렉션을 초기화하거나 `CHROMA_COLLECTION` 환경 변수를 "
+                    "변경해 다른 컬렉션을 사용해야 합니다."
+                )  # 차원 불일치 시 사용자가 수행해야 할 조치를 안내
+                logger.error("Chroma dimension mismatch detected: %s", message)
+                logger.warning(
+                    "기존 컬렉션 %s(%s)을 삭제하고 새 임베딩으로 재시도합니다.",
+                    collection_name,
+                    chroma_dir,
+                )  # 운영자가 상황을 파악할 수 있도록 자동 복구 절차를 로그로 남김
+                try:
+                    reset_collection()  # 차원 불일치를 야기한 기존 컬렉션을 삭제하여 깨끗한 상태로 만든다
+                    vectordb = get_vectordb(emb)  # 삭제 이후 동일한 임베딩으로 새 컬렉션을 다시 연다
+                    chroma_dir, collection_name = get_chroma_settings()  # 삭제 결과 반영된 최신 정보를 다시 조회한다
+                    count_before = 0  # 새로 만들어진 컬렉션이므로 기존 카운트는 0으로 재설정한다
+                    vectordb.add_documents(docs)  # 다시 문서를 업서트하여 업로드를 계속 진행한다
+                    vectordb.persist()  # 재시도한 데이터를 디스크에 영속화한다
+                    logger.info(
+                        "Chroma 컬렉션 %s 재생성 후 업로드를 완료했습니다.",
+                        collection_name,
+                    )  # 자동 복구가 성공했음을 알리는 로그를 남김
+                except Exception as retry_exc:
+                    logger.exception("Chroma 컬렉션 자동 초기화 재시도 실패")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"ingest failed: {message}. {hint}",
+                    ) from retry_exc  # 자동 복구에도 실패한 경우 명시적으로 안내
+            else:
+                raise  # 다른 ValueError는 기존 처리 흐름으로 전달
 
         try:
             count_after = vectordb._collection.count()
@@ -378,7 +418,7 @@ async def upload(
             count_after = None
 
         print(
-            f"[INGEST] to {CHROMA_COLLECTION} @ {CHROMA_DIR}, "
+            f"[INGEST] to {collection_name} @ {chroma_dir}, "
             f"file={file.filename}, chunks={len(docs)} → persist() done "
             f"(count {count_before} → {count_after})"
         )
@@ -388,12 +428,12 @@ async def upload(
             "ok": True,
             "file": file.filename,
             "chunks": len(docs),
-            "collection": CHROMA_COLLECTION,
-            "dir": str(CHROMA_DIR),
+            "collection": collection_name,
+            "dir": chroma_dir,
             "count_before": count_before,
             "count_after": count_after,
             "view": "/admin/rag/view?limit=50&offset=0",
-             "docId": doc_id,  # 응답에 실제 저장된 docId 값을 포함해 호출자가 확인하도록 함
+            "docId": doc_id,  # 응답에 실제 저장된 docId 값을 포함해 호출자가 확인하도록 함
         }
 
     except HTTPException:

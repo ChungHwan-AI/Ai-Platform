@@ -10,6 +10,12 @@ spring:
       hibernate.format_sql: true
       hibernate.jdbc.time_zone: Asia/Seoul
     show-sql: false
+  servlet:
+    multipart:
+      # 업로드 가능한 단일 파일의 기본 최대 용량을 50MB로 확장합니다.
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:50MB}
+      # 멀티파트 요청 전체 용량도 동일하게 50MB로 늘려 업로드 제한을 완화합니다.
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:50MB}
 
 logging:
   level:

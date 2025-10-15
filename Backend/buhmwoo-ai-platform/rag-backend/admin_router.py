@@ -2,29 +2,29 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import List, Dict, Any, Optional
-import os, html
+import html
 from collections import Counter
+
+from config_embed import get_embedding_backend_info_dict  # 임베딩 상태 조회 API 구성을 위해 임포트함
+from config_chroma import get_chroma_settings  # 동적으로 결정된 Chroma 저장 위치를 조회하기 위해 임포트함
 
 import chromadb
 from chromadb import ClientAPI
-from chromadb.utils import embedding_functions
+
 
 router = APIRouter(prefix="/admin/rag", tags=["admin-rag"])
 
-# === 환경설정 ===
-CHROMA_DIR = os.path.abspath(os.getenv("CHROMA_DIR", "./chroma_db"))
-CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "oneask_docs")
-
-# (선택) 기본 임베더 (불필요하면 제거 가능)
-_DEFAULT_EMBED = embedding_functions.DefaultEmbeddingFunction()
-
+# get_chroma_settings() 헬퍼를 통해 최신 경로·컬렉션 정보를 필요 시점에 조회한다.
 
 def get_collection() -> ClientAPI:
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    chroma_dir, collection_name = get_chroma_settings()  # 현재 저장 경로와 컬렉션 이름을 동적으로 조회함
+    client = chromadb.PersistentClient(path=chroma_dir)
     try:
-        col = client.get_collection(CHROMA_COLLECTION, embedding_function=_DEFAULT_EMBED)
+        # 기존 컬렉션을 그대로 불러와 LangChain이 저장한 데이터와 차원 정보를 유지한다
+        col = client.get_collection(collection_name)
     except Exception:
-        col = client.create_collection(CHROMA_COLLECTION, embedding_function=_DEFAULT_EMBED)
+        # 컬렉션이 아직 없다면 임시로 생성해 조회 페이지가 최소한 동작하도록 한다
+        col = client.create_collection(collection_name)
     return col
 
 
@@ -50,27 +50,41 @@ def _page_get_all(col, include: Optional[List[str]] = None, page_size: int = 100
 @router.get("/stats")
 def stats():
     col = get_collection()
+    chroma_dir, collection_name = get_chroma_settings()  # 응답에 최신 경로·컬렉션을 반영하기 위해 재조회함
     total_chunks = col.count()
     meta_all = col.get(include=["metadatas"]).get("metadatas") or []
     unique_docs_total = len(set(m.get("docId") for m in meta_all if m))
     return {
-        "collection": CHROMA_COLLECTION,
-        "persist_path": CHROMA_DIR,
+        "collection": collection_name,
+        "persist_path": chroma_dir,
         "total_chunks": total_chunks,
         "unique_docs_total": unique_docs_total,
     }
 
+@router.get("/embedding", response_class=JSONResponse)
+def embedding_status(force_refresh: bool = Query(False, description="임베딩 상태를 강제로 재확인할지 여부")):
+    """현재 RAG 백엔드가 활용 중인 임베딩 백엔드 상태를 JSON으로 반환"""
+
+    info = get_embedding_backend_info_dict(force_refresh=force_refresh)  # 임베딩 상태를 사전 형태로 조회하여 직렬화 준비
+    return {
+        "configuredBackend": info["configured_backend"],  # 환경 변수에 의해 설정된 백엔드 이름을 노출
+        "resolvedBackend": info["resolved_backend"],  # 실제 로딩된 백엔드 이름(미초기화 시 None)을 노출
+        "model": info["model"],  # 사용 중인 모델 이름을 반환
+        "fallback": info["fallback"],  # 폴백 여부를 전달하여 장애 여부를 파악 가능하게 함
+        "error": info["error"],  # 폴백 발생 시 에러 메시지를 함께 전달
+    }
 
 @router.get("/by-doc")
 def by_doc():
     col = get_collection()
+    chroma_dir, collection_name = get_chroma_settings()  # 동적으로 선택된 컬렉션 정보를 응답에 포함
     meta_all = col.get(include=["metadatas"]).get("metadatas") or []
     c = Counter(m.get("docId") for m in meta_all if m)
     rows = [{"docId": k, "chunks": v} for k, v in c.items() if k]
     rows.sort(key=lambda x: x["chunks"], reverse=True)
     return {
-        "collection": CHROMA_COLLECTION,
-        "persist_path": CHROMA_DIR,
+        "collection": collection_name,
+        "persist_path": chroma_dir,
         "rows": rows,
         "unique_docs_total": len(rows),
         "total_chunks": col.count(),
@@ -81,6 +95,7 @@ def by_doc():
 def view(limit: int = Query(50), offset: int = Query(0, ge=0), with_documents: bool = Query(True)):
     """JSON 뷰 (API용)"""
     col = get_collection()
+    chroma_dir, collection_name = get_chroma_settings()  # 응답 메타데이터에 최신 컬렉션 정보를 반영
     include = ["metadatas"] + (["documents"] if with_documents else [])
     if limit == -1:
         got = _page_get_all(col, include=include, page_size=1000)
@@ -110,8 +125,8 @@ def view(limit: int = Query(50), offset: int = Query(0, ge=0), with_documents: b
         })
 
     return {
-        "collection": CHROMA_COLLECTION,
-        "persist_path": CHROMA_DIR,
+        "collection": collection_name,
+        "persist_path": chroma_dir,
         "total_chunks": total_chunks,
         "unique_docs_total": unique_docs_total,
         "limit": limit,
@@ -135,6 +150,7 @@ def view_page(
     - 기본 컬럼: id, docId, page, source, chunkPreview
     """
     col = get_collection()
+    chroma_dir, collection_name = get_chroma_settings()  # HTML 템플릿 상단에 최신 경로/컬렉션 정보를 보여주기 위해 조회함
     include = ["metadatas"] + (["documents"] if with_documents else [])
     got = col.get(limit=limit, offset=offset, include=include)
 
@@ -173,7 +189,7 @@ def view_page(
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>Chroma View - {html.escape(CHROMA_COLLECTION)}</title>
+<title>Chroma View - {html.escape(collection_name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {{
@@ -223,7 +239,7 @@ def view_page(
 </style>
 </head>
 <body>
-  <h1>Chroma Collection: <span class="pill">{html.escape(CHROMA_COLLECTION)}</span></h1>
+  <h1>Chroma Collection: <span class="pill">{html.escape(collection_name)}</span></h1>
 
   <div class="stats">
     <div><span>Total Chunks</span><strong>{total_chunks}</strong></div>

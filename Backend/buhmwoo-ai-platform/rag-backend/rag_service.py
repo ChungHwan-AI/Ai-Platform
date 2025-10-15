@@ -2,7 +2,7 @@
 from typing import List
 from langchain_core.documents import Document
 from config_embed import get_embedding_fn
-from config_chroma import get_vectordb
+from config_chroma import get_vectordb  # LangChain Chroma 래퍼를 통해 컬렉션 핸들을 얻기 위해 임포트함
 
 # TODO: 필요하면 여기서 청킹 로직 교체(현재는 docs 그대로 저장)
 def chunk_docs(raw_texts: List[str], metadatas: List[dict] | None = None) -> List[Document]:
@@ -13,17 +13,13 @@ def chunk_docs(raw_texts: List[str], metadatas: List[dict] | None = None) -> Lis
 def ingest_texts(texts: List[str], metadatas: List[dict] | None = None) -> int:
     embedding_fn = get_embedding_fn()
     vectordb = get_vectordb(embedding_fn)
+    collection = vectordb._collection  # LangChain Chroma 래퍼에서 실제 컬렉션 핸들을 꺼내어 재사용
     docs = chunk_docs(texts, metadatas)
     vectordb.add_documents(docs)
     vectordb.persist()
-    # count 확인 (LangChain은 count 직접 제공X → chromadb 백엔드를 경유)
     try:
-        from chromadb import PersistentClient
-        import os
-        from config_chroma import CHROMA_DIR, CHROMA_COLLECTION
-        client = PersistentClient(path=CHROMA_DIR)
-        col = client.get_or_create_collection(CHROMA_COLLECTION)
-        return col.count()
+        # 벡터 스토어가 가리키는 컬렉션에서 직접 카운트를 읽어 일관된 값을 반환한다
+        return collection.count()
     except Exception:
         return -1
 
