@@ -7,8 +7,8 @@ spring:
   jpa:
     open-in-view: false
     properties:
-      hibernate.format_sql: true
-      hibernate.jdbc.time_zone: Asia/Seoul
+      "[hibernate.format_sql]": true
+      "[hibernate.jdbc.time_zone]": Asia/Seoul
     show-sql: false
   servlet:
     multipart:
@@ -19,7 +19,7 @@ spring:
 
 logging:
   level:
-    com.buhmwoo.oneask: DEBUG
+    "[com.buhmwoo.oneask]": DEBUG
 
 custom:
   db:
