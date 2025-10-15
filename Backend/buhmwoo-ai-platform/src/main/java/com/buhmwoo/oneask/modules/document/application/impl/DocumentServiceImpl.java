@@ -201,7 +201,7 @@ public class DocumentServiceImpl {
         }
     }
 
-    /** 문서 기반 질의: FastAPI /query */
+    /** 문서 기반 질의: FastAPI /query (UUID 가 없으면 전체 문서 대상) */
     public ApiResponseDto<String> ask(String uuid, String question) {
         try {
             String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
@@ -215,7 +215,9 @@ public class DocumentServiceImpl {
 
             Map<String, Object> req = new HashMap<>();
             req.put("question", question);
-            req.put("docId", uuid);
+            if (uuid != null && !uuid.isBlank()) {
+                req.put("docId", uuid);  // ✅ UUID 가 전달된 경우에만 특정 문서로 검색 범위를 제한하도록 요청 본문에 추가합니다.
+            }
             req.put("top_k", 3);
             
             System.out.println("[DEBUG] Request body: " + req);  // ← 로그 추가

@@ -62,4 +62,11 @@ public class DocumentController {
         return documentService.ask(uuid, question);
     }
 
+    @Operation(summary = "문서 전체 질문", description = "특정 문서를 지정하지 않고 업로드된 모든 문서를 대상으로 질문에 답합니다.")
+    
+    @GetMapping("/ask")
+    public ApiResponseDto<String> askAll(@RequestParam String question) {
+        return documentService.ask(null, question);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
+    }
+
 }
