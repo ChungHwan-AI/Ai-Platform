@@ -2,6 +2,8 @@ package com.buhmwoo.oneask.modules.document.application.impl;
 
 import com.buhmwoo.oneask.common.config.OneAskProperties;
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
+import com.buhmwoo.oneask.common.dto.PageResponse;
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.domain.Document;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,10 +19,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.*;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -32,7 +37,9 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.*;
 
 /**
@@ -174,6 +181,25 @@ public class DocumentServiceImpl {
             }
             return ApiResponseDto.fail("파일 업로드 실패: " + msg);
         }
+    }
+
+    /**
+     * 검색 조건과 페이지 정보를 받아 문서 목록을 PageResponse 로 변환합니다.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<DocumentListItemResponseDto> getDocumentPage(
+            String fileName,   // ✅ 파일명 검색어
+            String uploadedBy,   // ✅ 업로더 검색어
+            LocalDate uploadedFrom,   // ✅ 업로드 시작일(로컬 날짜)
+            LocalDate uploadedTo,   // ✅ 업로드 종료일(로컬 날짜)
+            Pageable pageable   // ✅ 페이징/정렬 정보
+    ) {
+        LocalDateTime from = uploadedFrom == null ? null : uploadedFrom.atStartOfDay();   // ✅ 검색 시작일을 00:00으로 변환
+        LocalDateTime to = uploadedTo == null ? null : uploadedTo.atTime(LocalTime.MAX);   // ✅ 검색 종료일을 23:59:59.999로 변환
+
+        Page<Document> page = documentRepository.searchDocuments(fileName, uploadedBy, from, to, pageable);   // ✅ 저장소에서 조건에 맞는 문서 조회
+        Page<DocumentListItemResponseDto> mapped = page.map(this::toListItemDto);   // ✅ 엔티티를 목록 DTO로 변환
+        return PageResponse.from(mapped);   // ✅ PageResponse 형태로 변환하여 반환
     }
 
     /** 다운로드 (UUID 기반) */
@@ -343,4 +369,19 @@ public class DocumentServiceImpl {
         response.put("previewText", preview);
         return ApiResponseDto.ok(response, message);
     }
+
+    /**
+     * Document 엔티티를 목록용 DTO로 변환합니다.
+     */
+    private DocumentListItemResponseDto toListItemDto(Document document) {
+        return DocumentListItemResponseDto.builder()
+                .id(document.getId())   // ✅ 기본 키 매핑
+                .uuid(document.getUuid())   // ✅ UUID 매핑
+                .fileName(document.getFileName())   // ✅ 파일명 매핑
+                .uploadedBy(document.getUploadedBy())   // ✅ 업로더 매핑
+                .uploadedAt(document.getUploadedAt())   // ✅ 업로드 시간 매핑
+                .size(document.getSize())   // ✅ 파일 크기 매핑
+                .description(document.getDescription())   // ✅ 설명 매핑
+                .build();
+    }    
 }

@@ -1,19 +1,29 @@
 package com.buhmwoo.oneask.modules.document.api.controller;
 
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
+import com.buhmwoo.oneask.common.dto.PageResponse;
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
 import com.buhmwoo.oneask.modules.document.application.impl.DocumentServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse; // ✅ 추가
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.format.annotation.DateTimeFormat;
 
 import java.util.*;
+import java.time.LocalDate;
 
 @Tag(name = "Document", description = "문서 업로드/다운로드 API")
 @RestController
@@ -35,7 +45,38 @@ public class DocumentController {
         return documentService.uploadFile(file, description, uploadedBy);
     }
 
-
+    @Operation(
+            summary = "문서 목록 조회",
+            description = "파일명/작성자/업로드일 조건과 페이징 정보를 이용해 문서 목록을 조회합니다.",
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "문서 목록 조회 성공",
+                            content = @Content(
+                                    mediaType = MediaType.APPLICATION_JSON_VALUE,
+                                    schema = @Schema(implementation = DocumentPageResponseDocs.class),
+                                    examples = @ExampleObject(
+                                            name = "기본 응답",
+                                            value = "{\n  \"success\": true,\n  \"message\": \"문서 목록 조회 성공\",\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": 1,\n        \"uuid\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"fileName\": \"report.pdf\",\n        \"uploadedBy\": \"alice\",\n        \"uploadedAt\": \"2025-02-01T10:15:30\",\n        \"size\": 1024,\n        \"description\": \"월간 보고서\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 10,\n    \"totalElements\": 1,\n    \"totalPages\": 1,\n    \"first\": true,\n    \"last\": true,\n    \"hasNext\": false,\n    \"hasPrev\": false,\n    \"sort\": {\n      \"orders\": [\n        {\n          \"property\": \"uploadedAt\",\n          \"direction\": \"DESC\"\n        }\n      ]\n    }\n  }\n}"
+                                    )
+                            )
+                    )
+            }
+    )
+    @GetMapping
+    public ApiResponseDto<PageResponse<DocumentListItemResponseDto>> getDocuments(
+            @RequestParam(value = "fileName", required = false) String fileName,   // ✅ 파일명 검색 파라미터
+            @RequestParam(value = "uploadedBy", required = false) String uploadedBy,   // ✅ 업로더 검색 파라미터
+            @RequestParam(value = "uploadedFrom", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate uploadedFrom,   // ✅ 업로드 시작일 검색 파라미터
+            @RequestParam(value = "uploadedTo", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate uploadedTo,   // ✅ 업로드 종료일 검색 파라미터
+            @ParameterObject @PageableDefault(sort = "uploadedAt", direction = Sort.Direction.DESC) Pageable pageable   // ✅ 기본 정렬을 업로드일 내림차순으로 설정
+    ) {
+        PageResponse<DocumentListItemResponseDto> page = documentService.getDocumentPage(fileName, uploadedBy, uploadedFrom, uploadedTo, pageable);   // ✅ 서비스로 위임하여 조회
+        return ApiResponseDto.ok(page, "문서 목록 조회 성공");   // ✅ 표준 ApiResponseDto 래핑
+    }
+    
     @Operation(
         summary = "파일 다운로드 (UUID)",
         description = "UUID를 기준으로 파일을 다운로드합니다.",
