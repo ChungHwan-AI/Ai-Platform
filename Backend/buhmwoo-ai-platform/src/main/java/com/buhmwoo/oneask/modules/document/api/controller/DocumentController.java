@@ -4,7 +4,8 @@ import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
-import com.buhmwoo.oneask.modules.document.application.impl.DocumentServiceImpl;
+import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
@@ -30,9 +31,9 @@ import java.time.LocalDate;
 @RequestMapping("/api/documents")
 public class DocumentController {
 
-    private final DocumentServiceImpl documentService;
+    private final DocumentService documentService; // ✅ 구현체 대신 인터페이스에 의존하도록 변경합니다.    
 
-    public DocumentController(DocumentServiceImpl documentService) {
+    public DocumentController(DocumentService documentService) { // ✅ 스프링이 인터페이스 타입으로 주입하도록 구성합니다.
         this.documentService = documentService;
     }
 

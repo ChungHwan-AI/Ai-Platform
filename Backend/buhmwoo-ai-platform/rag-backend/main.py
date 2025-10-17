@@ -158,14 +158,18 @@ def _build_prompt(question: str, docs: List[Document]) -> str:
     prompt = (
         "당신은 사내 문서를 바탕으로 답을 제공하는 한국어 도우미입니다."
         "\n주어진 문서 내용을 벗어난 추측은 피하고, 근거가 없으면 솔직하게 모른다고 답변하세요."
+        "\n답변에는 반드시 다음 세 개의 섹션을 포함하고 마크다운 헤더로 구분하세요: '## 사실 요약', '## 창의적 통찰', '## 추가 영감'."
+        "\n- '사실 요약'에는 문서에서 확인된 사실만을 간결한 불릿 목록으로 정리하세요."
+        "\n- '창의적 통찰'과 '추가 영감'의 모든 문장은 반드시 해당 내용을 뒷받침하는 문서 청크 근거를 대괄호 인용 형태로 명시하세요 (예: [청크 2])."
+        "\n- 근거를 찾을 수 없는 경우에는 '근거 부족'이라고 표기하고 추측을 덧붙이지 마세요."
+        "\n\n응답 형식 예시:\n## 사실 요약\n- [청크 1] 핵심 사실 요약\n\n## 창의적 통찰\n- [청크 2] 통찰 내용\n\n## 추가 영감\n- [청크 3] 추가 제안"        
         "\n\n[질문]\n"
         f"{question.strip()}"
-        "\n\n[참고 문서]\n"
+        "\n\n[참고 문서]\n"             
         f"{context_text}"
         "\n\n위 자료를 참고해 간결하고 핵심적인 답변을 작성하세요."
-    )
-    return prompt
-
+    )           
+    return prompt                   
 
 def _generate_answer(question: str, docs: List[Document]) -> str:
     """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
@@ -181,13 +185,15 @@ def _generate_answer(question: str, docs: List[Document]) -> str:
 
         from langchain_openai import ChatOpenAI  # 지연 임포트로 선택적 의존성 관리를 수행함
 
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-5")
         base_url = os.getenv("OPENAI_BASE_URL")
         try:
             # 잘못된 입력으로 인한 예외를 방지하기 위해 수치 변환 시 예외를 처리함
-            temperature = float(os.getenv("OPENAI_CHAT_TEMPERATURE", "0.2"))
+            # 기본 온도를 조금 높여 창의적 섹션 작성 시 유연성을 확보하되, 환경 변수로 조정할 수 있음을 명시함
+            temperature = float(os.getenv("OPENAI_CHAT_TEMPERATURE", "0.35"))
         except ValueError:
-            temperature = 0.2
+            # 환경 변수 파싱 실패 시에도 동일한 기본값을 사용하도록 예외 처리를 수행함
+            temperature = 0.35
 
         # 실제 LLM 호출 객체를 생성 (base_url 은 선택적으로 주입)
         llm_kwargs: Dict[str, Any] = {"model": model, "temperature": temperature, "api_key": api_key}

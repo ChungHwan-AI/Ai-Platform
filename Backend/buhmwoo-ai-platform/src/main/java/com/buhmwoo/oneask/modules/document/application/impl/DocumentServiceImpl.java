@@ -4,6 +4,7 @@ import com.buhmwoo.oneask.common.config.OneAskProperties;
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
+import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
 import com.buhmwoo.oneask.modules.document.domain.Document;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
 import lombok.RequiredArgsConstructor;
@@ -47,7 +48,7 @@ import java.util.*;
  */
 @Service
 @RequiredArgsConstructor
-public class DocumentServiceImpl {
+public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서비스 인터페이스를 구현하도록 명시합니다.
 
     private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);
 
@@ -64,6 +65,7 @@ public class DocumentServiceImpl {
             .build();
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
+    @Override // ✅ 인터페이스 계약을 충실히 따르고 있음을 표시합니다.
     public ApiResponseDto<Map<String, Object>> uploadFile(
             org.springframework.web.multipart.MultipartFile file,
             String description,
@@ -187,6 +189,7 @@ public class DocumentServiceImpl {
      * 검색 조건과 페이지 정보를 받아 문서 목록을 PageResponse 로 변환합니다.
      */
     @Transactional(readOnly = true)
+    @Override // ✅ 페이지 조회 로직이 인터페이스 시그니처를 구현함을 명시합니다.
     public PageResponse<DocumentListItemResponseDto> getDocumentPage(
             String fileName,   // ✅ 파일명 검색어
             String uploadedBy,   // ✅ 업로더 검색어
@@ -203,6 +206,7 @@ public class DocumentServiceImpl {
     }
 
     /** 다운로드 (UUID 기반) */
+    @Override // ✅ 다운로드 기능이 인터페이스 계약에 속함을 보여줍니다.
     public ResponseEntity<Resource> downloadFileByUuid(String uuid) {
         var optionalDoc = documentRepository.findByUuid(uuid);
         if (optionalDoc.isEmpty()) return ResponseEntity.notFound().build();
@@ -228,6 +232,7 @@ public class DocumentServiceImpl {
     }
 
     /** 문서 기반 질의: FastAPI /query (UUID 가 없으면 전체 문서 대상) */
+    @Override // ✅ 질의 처리 로직이 인터페이스 계약을 따른다는 것을 나타냅니다.
     public ApiResponseDto<String> ask(String uuid, String question) {
         try {
             String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
@@ -268,6 +273,7 @@ public class DocumentServiceImpl {
     }
 
     /** 문서 삭제: 스토리지/DB/RAG 인덱스에서 모두 정리한다. */
+    @Override // ✅ 삭제 로직이 인터페이스 정의와 연결됨을 표시합니다.
     public ApiResponseDto<Map<String, Object>> deleteDocument(String uuid) {
         if (uuid == null || uuid.isBlank()) {
             return ApiResponseDto.fail("문서 삭제 실패: UUID가 비어 있습니다.");
