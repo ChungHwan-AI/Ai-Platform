@@ -32,6 +32,12 @@
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
 
+    <!-- View 템플릿 엔진: 스프링 부트 내장 UI 구성을 위해 Thymeleaf 추가 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    
     <!-- Validation -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

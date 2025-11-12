@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>문서 관리 콘솔</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <!-- ✅ 간단한 시각 구분을 위해 추가 스타일을 지정합니다. -->
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.1); }
+        pre { white-space: pre-wrap; word-break: break-word; }
+    </style>
+</head>
+<body>
+<div class="container py-4">
+    <h1 class="mb-4">문서 관리 콘솔</h1>
+
+    <!-- ✅ 알림 메시지를 부트스트랩 Alert로 노출합니다. -->
+    <div th:if="${alertMessage}" class="alert" th:classappend=" ' alert-' + (${alertType} ?: 'info') " role="alert" th:text="${alertMessage}"></div>
+
+    <!-- ✅ 업로드 직후 미리보기 정보를 표 형태로 보여줍니다. -->
+    <div th:if="${uploadResult}" class="card mb-4">
+        <div class="card-header">업로드 결과</div>
+        <div class="card-body">
+            <dl class="row mb-0">
+                <dt class="col-sm-3">UUID</dt>
+                <dd class="col-sm-9" th:text="${uploadResult.uuid}"></dd>
+                <dt class="col-sm-3">파일명</dt>
+                <dd class="col-sm-9" th:text="${uploadResult.fileName}"></dd>
+                <dt class="col-sm-3">미리보기</dt>
+                <dd class="col-sm-9"><pre th:text="${uploadResult.previewText}"></pre></dd>
+            </dl>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">문서 업로드</div>
+                <div class="card-body">
+                    <!-- ✅ 업로드 폼에서 검색 조건을 함께 유지하기 위해 hidden 입력을 둡니다. -->
+                    <form th:action="@{/documents/upload}" method="post" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="file" class="form-label">파일</label>
+                            <input type="file" class="form-control" id="file" name="file" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="description" class="form-label">설명</label>
+                            <input type="text" class="form-control" id="description" name="description" placeholder="파일 설명을 입력하세요">
+                        </div>
+                        <div class="mb-3">
+                            <label for="uploadedBy" class="form-label">업로더</label>
+                            <input type="text" class="form-control" id="uploadedBy" name="uploadedBy" value="system">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">업로드</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">전체 문서 질의</div>
+                <div class="card-body">
+                    <!-- ✅ 전체 문서를 대상으로 RAG 질의를 수행하는 폼입니다. -->
+                    <form th:action="@{/documents/ask}" method="post">
+                        <div class="mb-3">
+                            <label for="globalQuestion" class="form-label">질문</label>
+                            <textarea class="form-control" id="globalQuestion" name="question" rows="3" placeholder="모든 문서에 대해 질문을 입력하세요" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary w-100">질문하기</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- ✅ 질의 결과가 있을 때 별도 카드로 표시합니다. -->
+            <div th:if="${askResult}" class="card mt-4 border-info">
+                <div class="card-header bg-info text-white">질의 결과</div>
+                <div class="card-body">
+                    <p class="mb-1 text-muted">
+                        <strong th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></strong>
+                    </p>
+                    <pre th:text="${askResult}"></pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header">문서 검색</div>
+                <div class="card-body">
+                    <!-- ✅ 검색 폼은 GET 방식을 사용해 페이지 이동과 조건 유지가 용이하도록 합니다. -->
+                    <form method="get" th:action="@{/documents}">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <label for="searchFileName" class="form-label">파일명</label>
+                                <input type="text" class="form-control" id="searchFileName" name="fileName" th:value="${searchParams.fileName}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="searchUploadedBy" class="form-label">업로더</label>
+                                <input type="text" class="form-control" id="searchUploadedBy" name="uploadedBy" th:value="${searchParams.uploadedBy}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="searchFrom" class="form-label">업로드 시작일</label>
+                                <input type="date" class="form-control" id="searchFrom" name="uploadedFrom" th:value="${searchParams.uploadedFrom}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="searchTo" class="form-label">업로드 종료일</label>
+                                <input type="date" class="form-control" id="searchTo" name="uploadedTo" th:value="${searchParams.uploadedTo}">
+                            </div>
+                            <div class="col-12 text-end">
+                                <button type="submit" class="btn btn-secondary">검색</button>
+                                <a class="btn btn-outline-secondary" th:href="@{/documents}">초기화</a>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>문서 목록</span>
+                    <span class="text-muted" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')} + '건'">0건</span>
+                </div>
+                <div class="table-responsive">
+                    <!-- ✅ 문서 목록을 표로 그려 업로드 정보와 액션 버튼을 제공합니다. -->
+                    <table class="table table-striped table-hover mb-0">
+                        <thead>
+                        <tr>
+                            <th>UUID</th>
+                            <th>파일명</th>
+                            <th>업로더</th>
+                            <th>업로드 일시</th>
+                            <th class="text-end">크기(bytes)</th>
+                            <th class="text-center">작업</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:if="${#lists.isEmpty(documents)}">
+                            <td colspan="6" class="text-center text-muted">조회된 문서가 없습니다.</td>
+                        </tr>
+                        <tr th:each="doc : ${documents}">
+                            <td class="small" th:text="${doc.uuid}"></td>
+                            <td>
+                                <div th:text="${doc.fileName}"></div>
+                                <div class="text-muted small" th:text="${doc.description}"></div>
+                            </td>
+                            <td th:text="${doc.uploadedBy}"></td>
+                            <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
+                            <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
+                            <td class="text-center">
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a class="btn btn-outline-secondary" th:href="@{'/api/documents/download/' + ${doc.uuid}}" target="_blank">다운로드</a>
+                                </div>
+                                <div class="mt-2">
+                                    <!-- ✅ 특정 문서를 대상으로 질의를 보낼 수 있는 폼입니다. -->
+                                    <form class="d-flex" th:action="@{'/documents/' + ${doc.uuid} + '/ask'}" method="post">
+                                        <input type="text" name="question" class="form-control form-control-sm me-2" placeholder="이 문서에 질문" required>
+                                        <button type="submit" class="btn btn-sm btn-outline-primary">질문</button>
+                                    </form>
+                                </div>
+                                <div class="mt-2">
+                                    <!-- ✅ 삭제 작업은 POST 요청으로 보호하며 확인 다이얼로그를 제공합니다. -->
+                                    <form th:action="@{'/documents/' + ${doc.uuid} + '/delete'}" method="post" onsubmit="return confirm('문서를 삭제하시겠습니까?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger w-100">삭제</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- ✅ 페이지 네비게이션 영역을 구성합니다. -->
+                <div class="card-footer d-flex justify-content-between align-items-center">
+                    <div>
+                        <span th:text="${page.page + 1}"></span>
+                        /
+                        <span th:text="${page.totalPages == 0 ? 1 : page.totalPages}"></span>
+                        페이지
+                    </div>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item" th:classappend="${page.first} ? ' disabled'">
+                                <a class="page-link" th:href="@{/documents(page=${page.page - 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">이전</a>
+                            </li>
+                            <li class="page-item" th:each="pageNumber : ${pageNumbers}" th:classappend="${pageNumber == page.page} ? ' active'">
+                                <a class="page-link" th:text="${pageNumber + 1}" th:href="@{/documents(page=${pageNumber}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}"></a>
+                            </li>
+                            <li class="page-item" th:classappend="${page.last} ? ' disabled'">
+                                <a class="page-link" th:href="@{/documents(page=${page.page + 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">다음</a>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+</html>

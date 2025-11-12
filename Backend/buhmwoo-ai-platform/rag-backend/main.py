@@ -6,7 +6,7 @@ import os  # LLM 공급자와 키 등 환경 변수 접근을 위해 os 모듈�
 
 from dataclasses import dataclass  # 프롬프트 컨텍스트 블록 정보를 구조화하기 위해 dataclass를 사용함
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form  # 업로드 엔드포인트에서 폼 필드와 파일을 다루기 위해 FastAPI 관련 클래스를 임포트함
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request  # 업로드 엔드포인트에서 폼 필드와 파일을 다루고 템플릿 렌더링에 필요한 Request 객체를 사용하기 위해 임포트함
 
 from dotenv import load_dotenv  # .env 파일을 읽어오기 위한 함수 임포트
 from pathlib import Path  # 업로드 파일 저장 경로를 다루기 위해 Path 클래스를 임포트함
@@ -15,6 +15,9 @@ from typing import List, Optional, Dict, Any  # 타입 힌트를 명확히 하�
 from langchain_core.documents import Document  # 청크를 LangChain Document 형태로 저장하기 위해 Document 클래스를 임포트함
 
 from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성을 위한 도구
+
+from fastapi.responses import HTMLResponse  # 간단한 웹 UI를 제공하기 위해 HTML 응답 클래스를 임포트함
+from fastapi.templating import Jinja2Templates  # Jinja 템플릿을 이용한 화면 렌더링을 위해 임포트함
 
 from pydantic import (
     BaseModel,
@@ -478,8 +481,22 @@ def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
 # 서버 시작 시 .env를 메모리로 불러오려는 목적
 load_dotenv()
 
+# 템플릿과 정적 리소스 경로 계산을 위해 모듈 기준 디렉터리를 미리 구함
+BASE_DIR = Path(__file__).parent  # 현재 파일 기준 디렉터리를 재사용하기 위해 상수로 정의함
+
 app = FastAPI()
 app.include_router(admin_router)
+
+# Jinja 템플릿 로더를 초기화하여 HTML 기반의 간단한 챗 인터페이스를 제공함
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.get("/", response_class=HTMLResponse, summary="웹 챗 인터페이스", tags=["ui"])
+async def chat_ui(request: Request) -> HTMLResponse:
+    """Swagger 대신 실제 채팅 화면에서 RAG 답변을 체험할 수 있는 엔드포인트"""
+
+    # 템플릿 렌더링에 필요한 request 컨텍스트만 전달하면 정적 HTML/JS가 로드됨
+    return templates.TemplateResponse("chat.html", {"request": request})
 
 @app.post("/upload")
 async def upload(
