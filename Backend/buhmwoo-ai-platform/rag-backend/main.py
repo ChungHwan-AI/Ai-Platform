@@ -4,18 +4,18 @@ import logging
 
 import os  # LLM 공급자와 키 등 환경 변수 접근을 위해 os 모듈을 임포트함
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form  # 업로드 엔드포인트에서 폼 필드와 파일을 다루기 위해 FastAPI 관련 클래스를 임포트함
+from dataclasses import dataclass  # 프롬프트 컨텍스트 블록 정보를 구조화하기 위해 dataclass를 사용함
 
-from fastapi import Body  # 쿼리 입력을 파싱하기 위한 Body 헬퍼
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form  # 업로드 엔드포인트에서 폼 필드와 파일을 다루기 위해 FastAPI 관련 클래스를 임포트함
 
 from dotenv import load_dotenv  # .env 파일을 읽어오기 위한 함수 임포트
 from pathlib import Path  # 업로드 파일 저장 경로를 다루기 위해 Path 클래스를 임포트함
 from typing import List, Optional, Dict, Any  # 타입 힌트를 명확히 하기 위해 필요한 제네릭 타입들을 임포트함
-from pydantic import BaseModel, Field, ConfigDict, AliasChoices  # 요청/응답 스키마 정의를 위해 Pydantic 유틸리티를 임포트함
+
 from langchain_core.documents import Document  # 청크를 LangChain Document 형태로 저장하기 위해 Document 클래스를 임포트함
 
 from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성을 위한 도구
-from langchain_openai import ChatOpenAI  # OpenAI 호출을 위한 LangChain 래퍼
+
 from pydantic import (
     BaseModel,
     Field,
@@ -31,10 +31,14 @@ from config_chroma import (
 )  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
 from config_embed import get_embedding_fn  # 임베딩 함수를 가져오기 위해 임포트함
 from utils.encoding import to_utf8_text  # 텍스트 인코딩을 UTF-8로 정규화하기 위해 임포트함
+from utils.chunking import (
+    chunk_single_document,
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+)  # 업로드 시 일관된 청킹 규칙을 적용하기 위해 공통 유틸을 임포트함
 from admin_router import router as admin_router  # 관리자용 라우터를 메인 앱에 포함시키기 위해 임포트함
 
-from pydantic import BaseModel
-from rag_service import query_text
+from rag_service import query_text  # 검색 서비스 모듈의 일관된 질의 헬퍼를 재사용하기 위해 임포트함
 
 
 # 모듈 전역 로거
@@ -46,6 +50,52 @@ if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO)
 # Uvicorn 런타임 로그 레벨을 명시적으로 INFO로 맞춤
 logging.getLogger("uvicorn").setLevel(logging.INFO)
+
+@dataclass
+class PromptContextChunk:
+    """프롬프트 및 응답 모두에서 재사용할 검색 청크 정보를 표현하는 구조체"""
+
+    reference: str  # LLM 응답 인용에 사용될 라벨 (예: [청크 1])
+    header: str  # 프롬프트에 노출될 출처 요약 헤더
+    body: str  # 청크 본문 텍스트
+    metadata: Dict[str, Any]  # 원본 문서 메타데이터 사본
+    source: str  # UX에서 표시할 주요 출처(파일명 또는 문서 ID)
+    page: Optional[int]  # 페이지/슬라이드 등 위치 정보
+    chunk_index: int  # 1부터 시작하는 청크 순번
+    preview: str  # 프론트에서 사용할 간단한 스니펫 텍스트
+
+
+# 시스템 메시지에 사용할 기본 지침 문자열 정의
+PROMPT_SYSTEM_TEXT = (
+    "당신은 사내 문서를 바탕으로 답을 제공하는 한국어 도우미입니다."
+    "\n- 제공된 문서 근거를 벗어난 추측은 피하고, 근거가 없으면 솔직하게 모른다고 답변하세요."
+    "\n- 쉬운 한국어를 사용하고, 전문 용어가 등장하면 짧은 풀이를 덧붙이세요."
+    "\n- 모든 창의적 통찰과 예시는 반드시 문서 근거에서 출발했음을 명시하세요."
+    "\n- 답변에는 반드시 다음 섹션을 포함하고 마크다운 헤더로 구분하세요: '## 핵심 요약', '## 사실에 기반한 창의적 통찰', '## 쉬운 비유나 예시'."
+    "\n- '사실에 기반한 창의적 통찰'과 '쉬운 비유나 예시'에 등장하는 문장은 각 문장 끝에 관련 청크 인용을 [청크 N] 형태로 붙이세요."
+    "\n- 근거를 찾을 수 없는 경우에는 '근거 부족'이라고 적고 추측을 덧붙이지 마세요."
+)
+
+
+# 사람이 이해하기 쉬운 예시/질문/참고 문서를 포함한 휴먼 메시지 템플릿을 정의
+PROMPT_HUMAN_TEMPLATE = (
+    "응답 형식 예시:\n"
+    "## 핵심 요약\n- [청크 1] 핵심 사실 요약\n\n"
+    "## 사실에 기반한 창의적 통찰\n- [청크 2] 통찰 내용\n\n"
+    "## 쉬운 비유나 예시\n- [청크 3] 비유 또는 예시\n\n"
+    "[질문]\n{question}\n\n"
+    "[참고 문서]\n{context}\n\n"
+    "위 자료를 참고해 독자가 쉽게 이해할 수 있는 답변을 작성하세요."
+)
+
+
+# LangChain ChatPromptTemplate으로 시스템/휴먼 메시지를 사전에 컴파일해둔다
+PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
+    [
+        ("system", PROMPT_SYSTEM_TEXT),
+        ("human", PROMPT_HUMAN_TEMPLATE),
+    ]
+)
 
 class QueryRequest(BaseModel):
     """/query 요청 스키마 정의"""
@@ -85,14 +135,34 @@ class QueryRequest(BaseModel):
 class Match(BaseModel):
     """벡터 검색 결과 청크 정보를 담는 스키마"""
 
+    # LLM 응답과 프론트엔드 인용에 사용할 고유 라벨 (예: [청크 1])
+    reference: str = Field(..., description="LLM 응답 인용에 사용할 청크 라벨")
+    # 청크 순번(1부터 시작). camelCase 입력도 허용하기 위해 validation_alias 를 지정한다.
+    chunk_index: int = Field(
+        ...,  # 검색 결과에 반드시 존재해야 하는 필드이므로 필수로 지정한다
+        ge=1,
+        alias="chunkIndex",
+        validation_alias=AliasChoices("chunkIndex", "chunk_index"),
+        description="검색 결과 순번 (1부터 시작)",
+    )    
     # 청크의 실제 본문 텍스트를 그대로 노출
     content: str = Field(..., description="검색된 청크 본문")
+    # 프론트엔드에서 목록 형태로 노출할 때 사용할 간략한 스니펫
+    preview: str = Field(..., description="줄바꿈을 제거하고 길이를 제한한 미리보기 텍스트")
+    # UX 에서 출처를 명확히 보여주기 위한 별도 필드
+    source: str = Field(..., description="원본 문서 이름 또는 ID")
+    # 페이지/슬라이드 등의 위치를 전달하기 위한 선택적 필드
+    page: Optional[int] = Field(
+        default=None,
+        description="문서 내 위치 정보 (해당하지 않으면 null)",
+    )
     # 추후 출처, 페이지 등의 메타데이터를 전달하기 위한 필드
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="청크에 연결된 메타데이터",
+        description="청크에 연결된 원본 메타데이터",
     )
 
+model_config = ConfigDict(populate_by_name=True)  # chunk_index 키로도 값을 설정할 수 있도록 허용한다.
 
 class QueryResponse(BaseModel):
     """/query 응답 스키마 정의"""
@@ -132,54 +202,65 @@ class DocDeleteRequest(BaseModel):
             raise ValueError("docId 또는 source 중 하나는 반드시 전달되어야 합니다.")
         return values
     
-def _build_prompt(question: str, docs: List[Document]) -> str:
-    """질문과 검색된 청크들을 하나의 프롬프트 텍스트로 변환"""
+def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChunk], str]:
+    """검색된 청크를 프롬프트와 API 응답 모두에서 활용 가능한 형태로 가공"""
 
-    # 각 청크에 번호를 붙여 출처와 본문을 함께 구성
-    context_blocks: List[str] = []
+    context_chunks: List[PromptContextChunk] = []  # 프롬프트/응답에서 재사용할 가공 결과를 담는 리스트
+    context_blocks: List[str] = []  # ChatPromptTemplate에 전달할 순수 텍스트 블록 모음
+
     for idx, doc in enumerate(docs, start=1):
-        meta = doc.metadata or {}
-        # 사람이 출처를 파악할 수 있도록 가능한 메타 필드를 함께 표기
-        source = meta.get("source") or meta.get("docId") or "unknown"
-        page = meta.get("page")
-        header = f"[청크 {idx}] 출처: {source}"
+        # LangChain Document 메타데이터를 복사해 변형 과정에서 원본이 손상되지 않도록 한다
+        meta = dict(doc.metadata or {})
+        source_raw = meta.get("source") or meta.get("docId") or "unknown"
+        source = str(source_raw)
+        page_value = meta.get("page")
+        if isinstance(page_value, (int, float)):
+            page = int(page_value)
+        elif isinstance(page_value, str) and page_value.isdigit():
+            page = int(page_value)
+        else:
+            page = None
+
+        reference = f"[청크 {idx}]"
+        header = f"{reference} 출처: {source}"
         if page is not None:
             header += f" | 페이지: {page}"
-        block = f"{header}\n{doc.page_content.strip()}"
-        context_blocks.append(block)
+        # 공백을 정리한 본문과 스니펫을 각각 준비한다
+        body = doc.page_content.strip()
+        snippet = " ".join(body.split())
+        if len(snippet) > 160:
+            snippet = snippet[:157] + "..."
+
+        context_blocks.append(f"{header}\n{body}")
+        context_chunks.append(
+            PromptContextChunk(
+                reference=reference,
+                header=header,
+                body=body,
+                metadata=meta,
+                source=source,
+                page=page,
+                chunk_index=idx,
+                preview=snippet,
+            )
+        )
 
     if not context_blocks:
-        # 검색된 청크가 없을 때는 안내 메시지를 포함하여 LLM이 상황을 인지하도록 유도
+        # 검색된 청크가 없을 때는 안내 문구를 넣어 LLM이 상황을 명확히 이해하도록 돕는다        
         context_blocks.append("(참고할 문서를 찾지 못했습니다.)")
 
     context_text = "\n\n".join(context_blocks)
+    return context_chunks, context_text
 
-    # 시스템 지침에 가까운 안내문으로 답변 톤과 형식을 제한
-    # (창의적이지만 이해하기 쉬운 답변 톤을 유도하기 위한 지침)
-    prompt = (
-        "당신은 사내 문서를 바탕으로 답을 제공하는 한국어 도우미입니다."
-        "\n주어진 문서 내용을 벗어난 추측은 피하고, 근거가 없으면 솔직하게 모른다고 답변하세요."
-        "\n쉬운 한국어를 사용하고, 기술 용어가 나오면 짧게 풀어 설명하세요."
-        "\n모든 창의적 통찰과 예시는 반드시 문서 근거에서 출발했음을 밝히세요."
-        "\n답변에는 반드시 다음 세 개의 섹션을 포함하고 마크다운 헤더로 구분하세요: '## 핵심 요약', '## 사실에 기반한 창의적 통찰', '## 쉬운 비유나 예시'."
-        "\n- '핵심 요약'에는 문서에서 확인된 사실만을 간결한 불릿 목록으로 정리하세요."
-        "\n- '사실에 기반한 창의적 통찰'의 모든 문장은 반드시 해당 내용을 뒷받침하는 문서 청크 근거를 대괄호 인용 형태로 명시하세요 (예: [청크 2])."
-        "\n- '쉬운 비유나 예시'에서는 독자의 이해를 돕는 비유나 예시를 제시하되, 각 아이디어가 어느 문서 근거에서 출발했는지 명확히 표기하세요."
-        "\n- 근거를 찾을 수 없는 경우에는 '근거 부족'이라고 표기하고 추측을 덧붙이지 마세요."
-        "\n\n응답 형식 예시:\n## 핵심 요약\n- [청크 1] 핵심 사실 요약\n\n## 사실에 기반한 창의적 통찰\n- [청크 2] 통찰 내용\n\n## 쉬운 비유나 예시\n- [청크 3] 쉬운 비유 또는 예시"        
-        "\n\n[질문]\n"
-        f"{question.strip()}"
-        "\n\n[참고 문서]\n"             
-        f"{context_text}"
-        "\n\n위 자료를 참고해 독자가 쉽게 이해할 수 있는 답변을 작성하세요."
-    )           
-    return prompt                   
-
-def _generate_answer(question: str, docs: List[Document]) -> str:
+def _generate_answer(question: str, context_text: str) -> str:
     """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
 
     provider = os.getenv("LLM_PROVIDER", "openai").lower()  # 기본 LLM 공급자를 openai로 설정함
-    prompt = _build_prompt(question, docs)  # 검색된 청크와 질문으로 최종 프롬프트를 생성함
+    # LangChain 프롬프트 템플릿으로 시스템/휴먼 메시지를 미리 구성해 일관된 UX를 유지한다
+    messages = PROMPT_TEMPLATE.format_messages(
+        question=question.strip(),
+        context=context_text,
+    )    
 
     if provider == "openai":
         # OpenAI 키가 없으면 즉시 오류를 발생시켜 클라이언트가 설정을 점검하도록 유도
@@ -206,7 +287,7 @@ def _generate_answer(question: str, docs: List[Document]) -> str:
             llm_kwargs["base_url"] = base_url
 
         llm = ChatOpenAI(**llm_kwargs)
-        response = llm.invoke(prompt)
+        response = llm.invoke(messages)
         return (response.content or "").strip() or "답변을 생성하지 못했습니다."
 
     # 현재는 OpenAI 만 지원하므로 다른 공급자가 들어오면 명시적으로 오류 반환
@@ -339,18 +420,6 @@ def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
         return _extract_text_xlsx(dst)
     raise HTTPException(status_code=400, detail=f"지원하지 않는 확장자: {ext}")
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 160) -> List[str]:
-    chunks: List[str] = []
-    n = len(text)
-    s = 0
-    while s < n:
-        e = min(n, s + chunk_size)
-        chunks.append(text[s:e])
-        if e == n:
-            break
-        s = e - overlap if e - overlap > s else e
-    return chunks
-
 # -----------------------------
 # FastAPI
 # -----------------------------
@@ -387,8 +456,19 @@ async def upload(
         if not text.strip():
             raise HTTPException(400, "본문이 비어 있습니다.")
 
-        # 3) 청킹
-        chunks = chunk_text(text, chunk_size=800, overlap=160)
+        # 3) 청킹 - 업로드 전용 청킹 규칙을 명시적으로 변수에 담아 가독성을 높인다
+        chunk_size = DEFAULT_CHUNK_SIZE
+        chunk_overlap = DEFAULT_CHUNK_OVERLAP
+        docs = chunk_single_document(
+            text,
+            {
+                "source": file.filename,
+                "doctype": ext[1:],
+                **({"docId": doc_id} if doc_id else {}),
+            },
+            chunk_size=chunk_size,
+            overlap=chunk_overlap,
+        )
 
         # 4) 벡터DB 업서트 + persist()
         emb = get_embedding_fn()
@@ -420,23 +500,7 @@ async def upload(
                 detail="기존 문서를 삭제하지 못해 업로드를 중단합니다.",
             ) from delete_exc
                 
-        chroma_dir, collection_name = get_chroma_settings()  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 함께 확인함
-
-        docs: List[Document] = []
-        for i, c in enumerate(chunks):
-            metadata = {
-                "source": file.filename,
-                "doctype": ext[1:],
-                "chunk_index": i,
-            }
-            if doc_id:
-                metadata["docId"] = doc_id
-            docs.append(
-                Document(
-                    page_content=c,
-                    metadata=metadata,
-                )        
-            )                    
+        chroma_dir, collection_name = get_chroma_settings()  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 함께 확인함                  
 
         # 디버그: add/persist 전후 카운트
         try:
@@ -524,30 +588,35 @@ async def query(payload: QueryRequest) -> QueryResponse:
     """문서 검색 후 LLM을 호출하여 최종 답변을 반환"""
 
     try:
-        # 업로드 시 사용한 임베딩과 동일한 함수를 불러와 일관성을 유지
-        embedding_fn = get_embedding_fn()
-        vectordb = get_vectordb(embedding_fn)
-
-        # docId 가 주어지면 해당 문서 범위에서만 검색하도록 필터를 적용
-        search_kwargs: Dict[str, Any] = {}
-        if payload.doc_id:
-            search_kwargs["filter"] = {"docId": payload.doc_id}
-
-        # LangChain VectorStore 의 similarity_search 를 활용해 상위 청크를 조회
-        docs = vectordb.similarity_search(
+        # docId 필터가 전달된 경우 retriever 팩토리가 이해할 수 있도록 metadata_filter 로 변환한다
+        metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
+         
+        # rag_service.query_text 를 통해 검색 전략/파라미터 구성을 일관되게 재사용한다
+        docs = query_text(
             payload.question,
             k=payload.top_k,
-            **search_kwargs,
-        )
+            metadata_filter=metadata_filter,
+        )            
 
-        # 검색된 청크 정보를 응답에 포함시키기 위해 스키마로 변환
-        matches = [
-            Match(content=doc.page_content, metadata=doc.metadata or {})
-            for doc in docs
+        # 프롬프트와 응답에서 동일한 라벨과 메타데이터를 쓰기 위해 컨텍스트를 한 번만 가공한다
+        context_chunks, context_text = _prepare_prompt_context(docs)
+
+        # 검색된 청크 정보를 응답에 포함시키되 UX 에 필요한 부가 필드를 함께 전달한다                
+        matches = [        
+            Match(
+                reference=chunk.reference,
+                chunk_index=chunk.chunk_index,
+                content=chunk.body,
+                preview=chunk.preview,
+                source=chunk.source,
+                page=chunk.page,
+                metadata=chunk.metadata,
+            )
+            for chunk in context_chunks
         ]
 
-        # LLM 에 전달할 컨텍스트로 활용하여 최종 답변을 생성
-        answer_text = _generate_answer(payload.question, docs)
+        # LLM 에 전달할 컨텍스트 텍스트를 재사용하여 최종 답변을 생성한다
+        answer_text = _generate_answer(payload.question, context_text)
 
         return QueryResponse(answer=answer_text, matches=matches)
 
