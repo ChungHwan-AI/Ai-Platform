@@ -310,11 +310,63 @@ def _extract_text_pdf(path: Path) -> str:
             out.append(page.get_text("text"))
     return "\n".join(out)
 
-def _extract_text_docx(path: Path) -> str:
-    from docx import Document as Docx
+def _iter_block_items(parent):
+    """docx 문서/셀에서 단락과 표를 순서대로 순회하기 위한 유틸 함수"""
 
-    d = Docx(str(path))
-    return "\n".join([p.text for p in d.paragraphs])
+    from docx.oxml.table import CT_Tbl  # 표 요소 식별을 위해 임포트
+    from docx.oxml.text.paragraph import CT_P  # 단락 요소 식별을 위해 임포트
+    from docx.table import _Cell, Table  # 셀/표 객체 타입 비교를 위해 임포트
+    from docx.text.paragraph import Paragraph  # 단락 객체 생성을 위해 임포트
+
+    # Document 인스턴스는 body, Cell 은 _tc 를 통해 하위 요소를 조회함
+    parent_elm = parent._tc if isinstance(parent, _Cell) else parent.element.body
+    for child in parent_elm.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, parent)  # 단락은 Paragraph 객체로 감싸 반환함
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, parent)  # 표 요소는 Table 객체로 변환해 반환함
+
+
+def _collect_table_text(table, out_lines: List[str]) -> None:
+    """docx 표를 순회하며 셀 텍스트를 라인으로 변환해 누적"""
+
+    from docx.text.paragraph import Paragraph  # 셀 내부 단락 텍스트 접근용 임포트
+    from docx.table import Table  # 중첩 표 판별을 위해 임포트
+
+    for row in table.rows:
+        row_texts: List[str] = []  # 한 행의 셀 텍스트를 저장해 가독성 있게 결합함
+        for cell in row.cells:
+            cell_fragments: List[str] = []  # 셀 내부 단락/중첩 표 텍스트를 모음
+            for item in _iter_block_items(cell):
+                if isinstance(item, Paragraph):
+                    text = item.text.strip()
+                    if text:
+                        cell_fragments.append(text)  # 셀 내 단락 텍스트를 모음
+                elif isinstance(item, Table):
+                    _collect_table_text(item, out_lines)  # 중첩 표는 재귀로 처리함
+            cell_text = " ".join(cell_fragments).strip()
+            if cell_text:
+                row_texts.append(cell_text)  # 공백 제거 후 남은 텍스트만 행에 추가함
+        if row_texts:
+            out_lines.append(" | ".join(row_texts))  # 행 전체를 파이프 구분자로 한 줄에 기록함
+
+def _extract_text_docx(path: Path) -> str:
+    from docx import Document as Docx  # DOCX 파일 열람을 위해 임포트
+    from docx.table import Table  # 블록이 표인지 판별하기 위한 임포트
+    from docx.text.paragraph import Paragraph  # 블록이 단락인지 판별하기 위한 임포트
+
+    doc = Docx(str(path))  # 업로드된 DOCX 파일을 메모리로 로드함
+    lines: List[str] = []  # 추출된 텍스트 조각을 순서대로 누적할 리스트를 준비함    
+
+    for block in _iter_block_items(doc):
+        if isinstance(block, Paragraph):
+            text = block.text.strip()
+            if text:
+                lines.append(text)  # 표 밖의 단락 텍스트를 그대로 누적함
+        elif isinstance(block, Table):
+            _collect_table_text(block, lines)  # 표는 행 단위 텍스트로 변환해 누적함
+
+    return "\n".join(lines)  # 문서 순서를 유지한 채 줄바꿈으로 합쳐 반환함
 
 def _shape_texts(shape) -> List[str]:
     """python-pptx shape 에서 텍스트/테이블 텍스트 추출"""
@@ -570,11 +622,17 @@ async def upload(
             "docId": doc_id,  # 응답에 실제 저장된 docId 값을 포함해 호출자가 확인하도록 함
         }
 
-    except HTTPException:
+    except HTTPException as http_exc:
+        logger.warning(
+            "업로드 요청이 실패했습니다 status=%s detail=%s",
+            http_exc.status_code,
+            http_exc.detail,
+        )  # FastAPI 로그에 실패 사유를 남겨 운영 시점에 원인을 바로 추적할 수 있도록 함
         raise
     except Exception as e:
-        # 숨은 예외(임베딩/HF 다운로드/의존성 등) 표면화
-        print(f"[ERROR] ingest failed: {e}")
+        logger.exception(
+            "업로드 처리 중 예상치 못한 오류가 발생했습니다"
+        )  # 미처 처리하지 못한 예외는 전체 스택을 기록해 디버깅 단서를 확보함
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
 
 # 문서 관련 질의 응답 

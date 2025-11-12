@@ -163,7 +163,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     return buildPreviewResponse(uuid, safeName, preview,
                             "파일 업로드 + 인덱싱 요청 완료: " + safeName);
                 } catch (Exception ex) {
-                    log.warn("[RAG] 업로드 예외: {}", ex.toString(), ex);
+                    log.warn("[RAG] : {}", ex.toString(), ex);
                     return buildPreviewResponse(uuid, safeName, preview,
                             "파일 업로드 완료(인덱싱 요청 실패): " + safeName);
                 }
