@@ -4,6 +4,8 @@ import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+import org.slf4j.Logger; // ✅ 오류 상황을 기록하기 위해 SLF4J 로거를 가져옵니다.
+import org.slf4j.LoggerFactory; // ✅ 현재 클래스용 로거 인스턴스를 생성하기 위해 사용합니다.
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -33,6 +35,8 @@ import java.util.stream.IntStream;
 @RequestMapping("/documents") // ✅ 문서 화면 접근 시 사용할 기본 경로를 고정합니다.
 public class DocumentViewController {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentViewController.class); // ✅ 화면 컨트롤러에서도 예외를 기록할 수 있도록 로거를 선언합니다.
+
     private final DocumentService documentService; // ✅ 기존 문서 서비스 빈을 주입해 동일한 비즈니스 로직을 재사용합니다.
 
     public DocumentViewController(DocumentService documentService) { // ✅ 생성자 주입을 통해 테스트와 유지보수가 쉬운 구조로 만듭니다.
@@ -60,10 +64,20 @@ public class DocumentViewController {
         int safeSize = Math.max(size, 1); // ✅ 최소 1건 이상 표시되도록 페이지 크기를 보정합니다.
 
         Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "uploadedAt")); // ✅ 업로드 최신순으로 페이지 정보를 구성합니다.
-        PageResponse<DocumentListItemResponseDto> pageResponse = documentService.getDocumentPage(fileName, uploadedBy, uploadedFrom, uploadedTo, pageable); // ✅ 기존 서비스 레이어를 호출해 목록 데이터를 조회합니다.
+                PageResponse<DocumentListItemResponseDto> pageResponse = PageResponse.empty(pageable); // ✅ 예외가 발생해도 기본적으로 빈 페이지 응답을 제공하기 위해 초기값을 세팅합니다.
+        List<DocumentListItemResponseDto> documents = pageResponse.getContent(); // ✅ 템플릿에서 사용할 목록 컬렉션의 기본값을 만들어 둡니다.
+
+        try {
+            pageResponse = documentService.getDocumentPage(fileName, uploadedBy, uploadedFrom, uploadedTo, pageable); // ✅ 기존 서비스 레이어를 호출해 목록 데이터를 조회합니다.
+            documents = pageResponse.getContent(); // ✅ 성공적으로 조회되었을 경우 실제 데이터를 반영합니다.
+        } catch (Exception ex) {
+            log.error("문서 목록 조회 실패", ex); // ✅ 서버 로그에 상세 원인을 남겨 이후 트러블슈팅을 돕습니다.
+            model.addAttribute("alertMessage", "문서 목록을 불러오는 중 오류가 발생했습니다: " + ex.getMessage()); // ✅ 사용자에게 오류 사실을 알리기 위해 알림 메시지를 제공합니다.
+            model.addAttribute("alertType", "danger"); // ✅ 오류 상황임을 시각적으로 표현하기 위해 경고 색상을 지정합니다.
+        }
 
         model.addAttribute("page", pageResponse); // ✅ 페이징 전체 정보를 템플릿에 전달합니다.
-        model.addAttribute("documents", pageResponse.getContent()); // ✅ 문서 목록만 별도로 꺼내어 반복 렌더링에 사용합니다.
+        model.addAttribute("documents", documents); // ✅ 문서 목록만 별도로 꺼내어 반복 렌더링에 사용합니다.
         model.addAttribute("searchParams", buildSearchParams(fileName, uploadedBy, uploadedFrom, uploadedTo)); // ✅ 검색 값이 유지되도록 파라미터를 모델에 전달합니다.
         model.addAttribute("pageNumbers", buildPageNumbers(pageResponse.getTotalPages())); // ✅ 페이지 네비게이션 렌더링을 위한 번호 목록을 제공합니다.
         return "documents"; // ✅ documents.html 템플릿을 렌더링하도록 반환합니다.
@@ -127,21 +141,13 @@ public class DocumentViewController {
         return "redirect:/documents"; // ✅ Post/Redirect/Get 흐름을 유지합니다.
     }
 
-    private Map<String, Object> buildSearchParams(String fileName, String uploadedBy, LocalDate uploadedFrom, LocalDate uploadedTo) { // ✅ 검색 입력값을 템플릿으로 전달하기 위한 헬퍼 메서드입니다.
-        Map<String, Object> params = new HashMap<>(); // ✅ 수정 가능한 맵을 생성해 모델 속성으로 활용합니다.
-        if (StringUtils.hasText(fileName)) {
-            params.put("fileName", fileName); // ✅ 파일명 검색어가 있을 때만 맵에 포함합니다.
-        }
-        if (StringUtils.hasText(uploadedBy)) {
-            params.put("uploadedBy", uploadedBy); // ✅ 업로더 검색어가 있을 때만 맵에 포함합니다.
-        }
-        if (uploadedFrom != null) {
-            params.put("uploadedFrom", uploadedFrom); // ✅ 날짜 검색 조건을 그대로 노출합니다.
-        }
-        if (uploadedTo != null) {
-            params.put("uploadedTo", uploadedTo); // ✅ 종료일 검색 조건을 그대로 노출합니다.
-        }
-        return params; // ✅ 템플릿에서 입력 값을 유지하는 데 활용합니다.
+    private SearchParams buildSearchParams(String fileName, String uploadedBy, LocalDate uploadedFrom, LocalDate uploadedTo) { // ✅ 검색 입력값을 담는 전용 DTO를 생성합니다.
+        return new SearchParams( // ✅ 모든 필드를 명시적으로 채워 SpEL이 안전하게 접근하도록 합니다.
+                StringUtils.hasText(fileName) ? fileName : null,
+                StringUtils.hasText(uploadedBy) ? uploadedBy : null,
+                uploadedFrom,
+                uploadedTo
+        );
     }
 
     private List<Integer> buildPageNumbers(int totalPages) { // ✅ 페이지 네비게이션을 구성하기 위한 헬퍼 메서드입니다.
@@ -149,5 +155,35 @@ public class DocumentViewController {
             return List.of();
         }
         return IntStream.range(0, totalPages).boxed().toList(); // ✅ 0부터 (totalPages-1)까지의 번호 목록을 생성합니다.
+    }
+
+        private static final class SearchParams { // ✅ 뷰 템플릿에서 사용할 검색 조건을 표현하는 불변 DTO입니다.
+        private final String fileName; // ✅ 파일명 검색어를 저장합니다.
+        private final String uploadedBy; // ✅ 업로더 검색어를 저장합니다.
+        private final LocalDate uploadedFrom; // ✅ 업로드 시작일 검색 조건을 저장합니다.
+        private final LocalDate uploadedTo; // ✅ 업로드 종료일 검색 조건을 저장합니다.
+
+        private SearchParams(String fileName, String uploadedBy, LocalDate uploadedFrom, LocalDate uploadedTo) { // ✅ 모든 검색 조건을 생성자에서 세팅해 불변성을 보장합니다.
+            this.fileName = fileName;
+            this.uploadedBy = uploadedBy;
+            this.uploadedFrom = uploadedFrom;
+            this.uploadedTo = uploadedTo;
+        }
+
+        public String getFileName() { // ✅ Thymeleaf가 접근할 수 있도록 게터를 제공합니다.
+            return fileName;
+        }
+
+        public String getUploadedBy() { // ✅ 업로더 검색어 게터입니다.
+            return uploadedBy;
+        }
+
+        public LocalDate getUploadedFrom() { // ✅ 업로드 시작일 게터입니다.
+            return uploadedFrom;
+        }
+
+        public LocalDate getUploadedTo() { // ✅ 업로드 종료일 게터입니다.
+            return uploadedTo;
+        }
     }
 }
