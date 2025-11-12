@@ -23,7 +23,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.time.LocalDate;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -157,12 +156,14 @@ public class DocumentViewController {
         return IntStream.range(0, totalPages).boxed().toList(); // ✅ 0부터 (totalPages-1)까지의 번호 목록을 생성합니다.
     }
 
+        @SuppressWarnings("unused") // ✅ 템플릿이 리플렉션으로 접근하므로 컴파일러가 사용하지 않는다고 오해하지 않도록 합니다.
         private static final class SearchParams { // ✅ 뷰 템플릿에서 사용할 검색 조건을 표현하는 불변 DTO입니다.
         private final String fileName; // ✅ 파일명 검색어를 저장합니다.
         private final String uploadedBy; // ✅ 업로더 검색어를 저장합니다.
         private final LocalDate uploadedFrom; // ✅ 업로드 시작일 검색 조건을 저장합니다.
         private final LocalDate uploadedTo; // ✅ 업로드 종료일 검색 조건을 저장합니다.
 
+        
         private SearchParams(String fileName, String uploadedBy, LocalDate uploadedFrom, LocalDate uploadedTo) { // ✅ 모든 검색 조건을 생성자에서 세팅해 불변성을 보장합니다.
             this.fileName = fileName;
             this.uploadedBy = uploadedBy;
@@ -170,18 +171,22 @@ public class DocumentViewController {
             this.uploadedTo = uploadedTo;
         }
 
+        @SuppressWarnings("unused") // ✅ 템플릿 전용 접근자이므로 로컬에서 사용하지 않아도 경고를 억제합니다.
         public String getFileName() { // ✅ Thymeleaf가 접근할 수 있도록 게터를 제공합니다.
             return fileName;
         }
 
+        @SuppressWarnings("unused") // ✅ 템플릿 전용 접근자이므로 로컬에서 사용하지 않아도 경고를 억제합니다.
         public String getUploadedBy() { // ✅ 업로더 검색어 게터입니다.
             return uploadedBy;
         }
 
+        @SuppressWarnings("unused") // ✅ 템플릿 전용 접근자이므로 로컬에서 사용하지 않아도 경고를 억제합니다.
         public LocalDate getUploadedFrom() { // ✅ 업로드 시작일 게터입니다.
             return uploadedFrom;
         }
 
+        @SuppressWarnings("unused") // ✅ 템플릿 전용 접근자이므로 로컬에서 사용하지 않아도 경고를 억제합니다.
         public LocalDate getUploadedTo() { // ✅ 업로드 종료일 게터입니다.
             return uploadedTo;
         }
