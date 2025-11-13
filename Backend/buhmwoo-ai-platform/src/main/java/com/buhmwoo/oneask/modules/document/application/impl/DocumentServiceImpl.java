@@ -33,11 +33,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.*;
 import org.springframework.http.client.MultipartBodyBuilder;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 
 
@@ -254,8 +252,8 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
             DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
 
-            DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
-            DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
+            GptRequest gptRequest = new GptRequest(question, retrievalResult.context()); // ✅ 검색 결과 컨텍스트와 질문을 묶어 LLM 호출 파라미터로 준비합니다.
+            GptResponse gptResponse = gptClient.generate(gptRequest); // ✅ GPT 모듈을 통해 최종 답변 생성을 요청합니다.
 
             if (gptResponse.answer() == null || gptResponse.answer().isBlank()) {
                 return ApiResponseDto.fail("질의 실패: GPT 응답이 비어 있습니다."); // ✅ 의미 있는 답변이 없는 경우 실패로 간주합니다.            
