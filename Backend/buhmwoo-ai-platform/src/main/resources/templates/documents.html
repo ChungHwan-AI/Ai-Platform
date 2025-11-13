@@ -218,6 +218,7 @@
     </style>
 </head>
 <body>
+<div id="documentPageState" class="d-none" th:data-open-search-modal="${searchTriggered}"></div> <!-- ✅ 검색 이후에도 모달을 유지하기 위해 현재 화면 상태를 data-* 속성으로 전달합니다. -->    
 <div class="chat-wrapper">
     <!-- ✅ 상단 헤더: 현재 문서 상태와 간단한 설명을 제공합니다. -->
     <header class="chat-header">
@@ -404,7 +405,13 @@
                                 <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
                             </form>
                         </div>
-                        <div class="alert alert-info small mt-3 mb-0" id="documentSelectionHint">선택된 문서는 하단 질문 영역에서 자동으로 대상 문서로 설정됩니다.</div>
+                        <div class="d-flex flex-wrap gap-2 mt-3">
+                            <button type="button" class="btn btn-sm btn-primary" id="applySelectedDocument" disabled>선택 문서 적용</button> <!-- ✅ 사용자가 특정 문서를 선택한 뒤 메인 질문 영역에 즉시 반영하도록 확정하는 버튼입니다. -->
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="applyAllDocuments">전체 문서 질문</button> <!-- ✅ 선택을 취소하고 전체 문서를 대상으로 다시 질문할 수 있게 돕는 버튼입니다. -->
+                        </div>
+                        <div class="alert alert-info small mt-3 mb-0" id="documentSelectionHint">선택된 문서는 [선택 문서 적용] 버튼을 누르거나 창을 닫으면 하단 질문 영역에 대상 문서로 반영됩니다.
+
+                        </div> <!-- ✅ 선택 적용 방법을 명시해 사용자가 흐름을 이해할 수 있도록 안내 문구를 갱신합니다. -->
                     </div>
                 </div>
                 <!-- ✅ 페이지 네비게이션을 모달 하단에 유지합니다. -->
@@ -472,14 +479,34 @@
     <script>
         // ✅ 문서 선택과 질문 전송 흐름을 제어하는 초기화 스크립트입니다.        
         document.addEventListener('DOMContentLoaded', function () {
-            var targetAskForm = document.getElementById('targetAskForm');
-            if (!targetAskForm) {
-                return;
+            var questionForm = document.getElementById('mainQuestionForm'); // ✅ 하단 질문 입력 폼을 찾아 선택된 문서 정보를 연동합니다.
+            if (!questionForm) {
+                return; // ✅ 폼이 없으면 초기화 로직이 필요하지 않으므로 조기에 종료합니다.
             }
-            var askAllUrl = questionForm.dataset.askAll || '';
-            var askBase = questionForm.dataset.askBase || '';
+
+            var searchModalElement = document.getElementById('searchModal'); // ✅ 검색 모달 요소를 찾아 이후 자동 열기 및 닫기 동작에 활용합니다.
+            var searchModalInstance = null; // ✅ 부트스트랩 모달 인스턴스를 저장해 재사용합니다.
+            if (searchModalElement && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                searchModalInstance = bootstrap.Modal.getOrCreateInstance(searchModalElement); // ✅ 부트스트랩 유틸리티를 사용해 모달 인스턴스를 준비합니다.
+            }
+            var pageState = document.getElementById('documentPageState'); // ✅ 서버에서 전달한 모달 오픈 여부를 확인하기 위한 요소를 조회합니다.
+            var shouldAutoOpenModal = pageState && pageState.dataset.openSearchModal === 'true'; // ✅ 자동으로 모달을 열어야 하는지 여부를 미리 계산합니다.
+            if (shouldAutoOpenModal && searchModalElement) {
+                searchModalElement.addEventListener('shown.bs.modal', function () {
+                    var searchField = document.getElementById('searchFileName');
+                    if (searchField) {
+                        searchField.focus(); // ✅ 모달이 다시 열리면 곧바로 검색 입력에 포커스를 맞춰 재검색이 편하도록 합니다.
+                    }
+                });
+            }
+            if (shouldAutoOpenModal && searchModalInstance) {
+                searchModalInstance.show(); // ✅ 검색이나 페이지 이동 이후에는 화면 로딩 시 모달을 자동으로 다시 표시합니다.
+            }
+
+            var askAllUrl = questionForm.dataset.askAll || ''; // ✅ 전체 문서 질의 엔드포인트 경로를 data-* 속성에서 읽어옵니다.
+            var askBase = questionForm.dataset.askBase || ''; // ✅ 특정 문서를 대상으로 질문할 때 사용할 기본 경로를 준비합니다.
             if (askBase && !askBase.endsWith('/')) {
-                askBase += '/';
+                askBase += '/'; // ✅ URL 결합 시 슬래시 누락으로 인한 404를 방지하기 위해 후행 슬래시를 보정합니다.
             }
 
             var targetLabel = document.getElementById('questionTargetLabel');
@@ -495,6 +522,8 @@
             var detailSize = document.getElementById('detailSize');
             var downloadLink = document.getElementById('documentDownloadLink');
             var deleteForm = document.getElementById('documentDeleteForm');
+            var confirmButton = document.getElementById('applySelectedDocument'); // ✅ 사용자가 선택한 문서를 확정할 버튼을 가져옵니다.
+            var applyAllButton = document.getElementById('applyAllDocuments'); // ✅ 전체 문서 대상으로 전환하는 버튼을 가져옵니다.            
             var tableRows = Array.prototype.slice.call(document.querySelectorAll('tr[data-document-row]'));
             var downloadBase = detailPanel ? detailPanel.dataset.downloadBase : '';
             var deleteBase = detailPanel ? detailPanel.dataset.deleteBase : '';
@@ -502,6 +531,16 @@
             var selectedUuid = '';
             var selectedName = '';
 
+            function setConfirmButtonState(isActive) { // ✅ 선택 상태에 따라 적용 버튼을 활성화하거나 비활성화하는 헬퍼입니다.
+                if (!confirmButton) {
+                    return;
+                }
+                if (isActive) {
+                    confirmButton.removeAttribute('disabled');
+                } else {
+                    confirmButton.setAttribute('disabled', 'disabled');
+                }
+            }            
             // ✅ 질문 대상 상태를 갱신하는 헬퍼 함수입니다.
             function applyTarget(uuid, name) {
                 selectedUuid = uuid || '';
@@ -513,9 +552,9 @@
                         targetLabel.textContent = '선택된 문서에 질문합니다: ' + (selectedName || ('UUID ' + selectedUuid));
                     }
                     if (resetButton) {
-                // ✅ 초기화 버튼을 눌렀을 때 전체 문서 모드로 되돌립니다.
-                        resetButton.classList.remove('d-none');
+                        resetButton.classList.remove('d-none'); // ✅ 초기화 버튼을 눌렀을 때 전체 문서 모드로 되돌립니다.
                     }
+                    setConfirmButtonState(true);
                 } else {
                     if (targetLabel) {
                         targetLabel.textContent = '전체 문서를 대상으로 질문합니다.';
@@ -523,6 +562,7 @@
                     if (resetButton) {
                         resetButton.classList.add('d-none');
                     }
+                    setConfirmButtonState(false);                    
                 }
             }
 
@@ -579,6 +619,8 @@
 
                 if (shouldUpdateTarget) {
                     applyTarget(uuid, name);
+                } else if (uuid) {
+                    setConfirmButtonState(true); // ✅ 기존 선택을 복원할 때도 버튼이 즉시 활성화되도록 보정합니다.                    
                 }
             }
 
@@ -608,24 +650,49 @@
                 }
             }
 
+                        function resetSelectionState() { // ✅ 선택 정보를 초기화하는 공통 루틴입니다.
+                applyTarget('', '');
+                tableRows.forEach(function (row) {
+                    row.classList.remove('document-row-active');
+                });
+                if (detailPlaceholder && detailContent) {
+                    detailContent.classList.add('d-none');
+                    detailPlaceholder.classList.remove('d-none');
+                }
+                if (downloadLink) {
+                    downloadLink.href = '#';
+                    downloadLink.classList.add('disabled');
+                    downloadLink.setAttribute('aria-disabled', 'true');
+                }
+                if (deleteForm) {
+                    deleteForm.action = '';
+                    deleteForm.classList.add('d-none');
+                }
+            }
             if (resetButton) {
                 resetButton.addEventListener('click', function () {
-                    applyTarget('', '');
-                    tableRows.forEach(function (row) {
-                        row.classList.remove('document-row-active');
-                    });
-                    if (detailPlaceholder && detailContent) {
-                        detailContent.classList.add('d-none');
-                        detailPlaceholder.classList.remove('d-none');
+                    resetSelectionState();
+                });
+            }
+
+            if (applyAllButton) {
+                applyAllButton.addEventListener('click', function () {
+                    resetSelectionState(); // ✅ 모달 내부에서도 즉시 전체 문서 모드로 전환합니다.
+                    if (searchModalInstance) {
+                        searchModalInstance.hide();
                     }
-                    if (downloadLink) {
-                        downloadLink.href = '#';
-                        downloadLink.classList.add('disabled');
-                        downloadLink.setAttribute('aria-disabled', 'true');
+                });
+            }
+
+            if (confirmButton) {
+                confirmButton.addEventListener('click', function () {
+                    if (!selectedUuid) {
+                        alert('선택된 문서가 없습니다. 목록에서 문서를 선택해주세요.'); // ✅ 사용자가 선택 없이 버튼을 누르면 안내 메시지를 제공합니다.
+                        return;
                     }
-                    if (deleteForm) {
-                        deleteForm.action = '';
-                        deleteForm.classList.add('d-none');
+                    applyTarget(selectedUuid, selectedName); // ✅ 최신 선택 정보를 다시 한 번 확정해 하단 폼에 반영합니다.
+                    if (searchModalInstance) {
+                        searchModalInstance.hide(); // ✅ 확정 후 모달을 닫아 메인 화면으로 자연스럽게 전환합니다.
                     }
                 });
             }
@@ -639,6 +706,14 @@
                 }
             });
         });
+            if (!shouldAutoOpenModal && searchModalElement) {
+                searchModalElement.addEventListener('shown.bs.modal', function () {
+                    var searchField = document.getElementById('searchFileName');
+                    if (searchField) {
+                        searchField.focus(); // ✅ 수동으로 모달을 열었을 때도 검색 필드를 자동 포커싱해 입력 편의성을 높입니다.
+                    }
+                });
+            }        
     </script>
  </body>
  </html>

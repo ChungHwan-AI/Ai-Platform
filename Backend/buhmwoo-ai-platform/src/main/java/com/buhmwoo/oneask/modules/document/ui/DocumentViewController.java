@@ -75,10 +75,17 @@ public class DocumentViewController {
             model.addAttribute("alertType", "danger"); // ✅ 오류 상황임을 시각적으로 표현하기 위해 경고 색상을 지정합니다.
         }
 
+                boolean searchTriggered = StringUtils.hasText(fileName)
+                || StringUtils.hasText(uploadedBy)
+                || uploadedFrom != null
+                || uploadedTo != null
+                || safePage > 0; // ✅ 검색 조건이나 페이지 이동이 발생했다면 모달을 자동으로 다시 열기 위한 플래그를 계산합니다.
+
         model.addAttribute("page", pageResponse); // ✅ 페이징 전체 정보를 템플릿에 전달합니다.
         model.addAttribute("documents", documents); // ✅ 문서 목록만 별도로 꺼내어 반복 렌더링에 사용합니다.
         model.addAttribute("searchParams", buildSearchParams(fileName, uploadedBy, uploadedFrom, uploadedTo)); // ✅ 검색 값이 유지되도록 파라미터를 모델에 전달합니다.
         model.addAttribute("pageNumbers", buildPageNumbers(pageResponse.getTotalPages())); // ✅ 페이지 네비게이션 렌더링을 위한 번호 목록을 제공합니다.
+        model.addAttribute("searchTriggered", searchTriggered); // ✅ 프런트에서 모달 오픈 여부를 판단할 수 있도록 상태 값을 추가합니다.
         return "documents"; // ✅ documents.html 템플릿을 렌더링하도록 반환합니다.
     }
 
