@@ -4,341 +4,428 @@
     <meta charset="UTF-8">
     <title>문서 관리 콘솔</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-   <!-- ✅ 문서 콘솔을 ChatGPT 콘솔과 유사한 감성으로 재구성하기 위해 전역 스타일을 새롭게 정의합니다. -->
+    <!-- ✅ ChatGPT 레이아웃과 유사한 상·하단 2분할 구조를 구성하기 위한 전체 스타일을 정의합니다. -->
     <style>
-        /* ✅ 화면 전체에 그라디언트와 여백을 주어 중앙 집중형 레이아웃을 만듭니다. */
+    /* ✅ 화면 전체 배경과 폰트를 설정하여 집중형 콘솔 느낌을 만듭니다. */
         body {
-            min-height: 100vh;
             margin: 0;
-            background: radial-gradient(circle at top, #eef2ff 0%, #f8f9ff 35%, #f3f4f6 100%);
-            padding: 2.5rem 1.5rem;
-            font-family: "Pretendard", "Noto Sans KR", sans-serif;
-        }
-
-        /* ✅ 메인 콘솔의 최대 폭을 제한하고 자동으로 중앙 정렬합니다. */
-        .dashboard-shell {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        /* ✅ 유리 패널 느낌의 카드 스타일을 정의해 통일된 분위기를 제공합니다. */
-        .glass-card {
-            background: rgba(255, 255, 255, 0.92);
-            border-radius: 1.25rem;
-            border: 1px solid rgba(255, 255, 255, 0.6);
-            box-shadow: 0 30px 60px rgba(15, 23, 42, 0.12);
-            backdrop-filter: blur(18px);
-        }
-
-        /* ✅ 영웅 섹션은 헤더와 통계 정보를 나란히 배치합니다. */
-        .hero-card {
-            padding: 2rem 2.5rem;
+            min-height: 100vh;
             display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1.5rem;
+            flex-direction: column;
+            background: linear-gradient(180deg, #f4f7fb 0%, #eef1f8 40%, #f9fafc 100%);
+            font-family: "Pretendard", "Noto Sans KR", sans-serif;
+            color: #0f172a;
+        }
+
+        /* ✅ 중앙 정렬된 고정 폭 레이아웃을 위해 래퍼에 여백을 부여합니다. */
+        .chat-wrapper {
+            width: min(1100px, 100%);
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            padding: 2.5rem 1.5rem 7.5rem; /* ✅ 하단 고정 바 공간을 확보하기 위해 패딩을 크게 줍니다. */
+            box-sizing: border-box;
+        }
+
+        /* ✅ 상단 헤더 카드를 유리 느낌으로 표현해 현재 상태를 강조합니다. */
+        .chat-header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 1.5rem;
+            border: 1px solid rgba(226, 232, 240, 0.7);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+            padding: 2.5rem 2.25rem;
             margin-bottom: 2rem;
         }
 
-        /* ✅ 문서 통계 뱃지를 강조해 현재 상태를 빠르게 확인할 수 있게 합니다. */
-        .hero-stat {
-            display: grid;
-            gap: 0.25rem;
-            text-align: right;
-            font-weight: 600;
-            color: #1e293b;
+        /* ✅ 헤더 안에서 제목과 통계 정보를 나란히 배치합니다. */
+        .chat-header-top {
+            display: flex;
+            flex-wrap: wrap;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1.5rem;
         }
 
-        /* ✅ 보조 설명의 가독성을 높입니다. */
-        .hero-card p {
-            margin-bottom: 0;
-            color: #475569;
-        }
-
-        /* ✅ 2단 레이아웃을 위한 그리드를 구성하고 반응형 대응을 적용합니다. */
-        .workspace-grid {
-            display: grid;
-            grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-            gap: 1.75rem;
-        }
-
-        /* ✅ 카드 내부 패딩과 여백을 조정해 통일감을 줍니다. */
-        .workspace-grid .card {
-            border: none;
-            border-radius: 1rem;
-            box-shadow: none;
-            background: transparent;
-        }
-
-        /* ✅ 카드 헤더는 투명 배경과 굵은 글꼴로 정리합니다. */
-        .workspace-grid .card-header {
-            background: transparent;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.3);
-            font-weight: 600;
-            color: #0f172a;
-        }
-
-        /* ✅ 카드 바디에 충분한 패딩을 넣어 여유 있는 간격을 유지합니다. */
-        .workspace-grid .card-body {
-            padding: 1.5rem;
-        }
-
-        /* ✅ 테이블 영역 역시 유리 카드 테마에 맞춰 재구성합니다. */
-        .documents-panel {
-            padding: 1.5rem;
-        }
-
-        /* ✅ 테이블 상단 테두리와 행 강조를 조정합니다. */
-        .documents-panel table thead {
-            background: rgba(148, 163, 184, 0.12);
-        }
-
-        /* ✅ pre 태그는 긴 텍스트를 보기 좋게 정리합니다. */
-        pre {
-            white-space: pre-wrap;
-            word-break: break-word;
-            background: rgba(248, 250, 252, 0.75);
-            border-radius: 0.75rem;
-            padding: 1rem;
-            border: 1px solid rgba(203, 213, 225, 0.6);
-        }
-
-        /* ✅ 배지를 이용해 문서 수를 강조합니다. */
+        /* ✅ 통계 뱃지 스타일을 정의합니다. */
         .stat-badge {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 0.65rem 1rem;
+            gap: 0.75rem;
+            padding: 0.75rem 1.25rem;
             border-radius: 999px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(14, 165, 233, 0.12));
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
             color: #0f172a;
-            font-size: 0.95rem;
+            font-weight: 600;
         }
 
-        /* ✅ 반응형 처리로 모바일에서도 간결하게 정렬합니다. */
-        @media (max-width: 992px) {
-            body {
-                padding: 1.5rem 1rem;
+        /* ✅ 메인 영역은 ChatGPT 메시지 흐름과 유사하게 스택으로 쌓이도록 구성합니다. */
+        .chat-feed {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        /* ✅ 메시지 카드 공통 스타일을 정의합니다. */
+        .chat-bubble {
+            background: rgba(255, 255, 255, 0.92);
+            border-radius: 1.25rem;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            box-shadow: 0 18px 35px rgba(15, 23, 42, 0.08);
+            padding: 1.75rem;
+        }
+
+
+        /* ✅ 하단 고정 입력 영역을 구성합니다. */
+        .chat-footer {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(248, 250, 252, 0.92);
+            border-top: 1px solid rgba(203, 213, 225, 0.7);
+            backdrop-filter: blur(14px);
+            padding: 1.25rem 1rem;
+        }
+
+        /* ✅ 하단 버튼 바의 중앙 정렬과 버튼 간격을 조정합니다. */
+        .action-bar {
+            width: min(900px, 100%);
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        /* ✅ 플러스 버튼에 원형 스타일을 부여해 업로드 동작을 직관화합니다. */
+        .btn-plus {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            border-radius: 999px;
+            padding: 0.85rem 1.35rem;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: #fff;
+        }
+
+        /* ✅ 보조 버튼을 유리 느낌으로 표현합니다. */
+        .btn-glass {
+            border-radius: 999px;
+            padding: 0.85rem 1.35rem;
+            border: 1px solid rgba(148, 163, 184, 0.45);
+            background: rgba(255, 255, 255, 0.75);
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        /* ✅ 모달 내부의 카드 스타일을 통일합니다. */
+        .modal-card {
+            background: rgba(248, 250, 252, 0.88);
+            border-radius: 1.25rem;
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        }
+
+        /* ✅ 긴 표 영역의 스크롤을 보장합니다. */
+        .table-scroll {
+            max-height: 420px;
+            overflow-y: auto;
+        }
+
+        /* ✅ 반응형 환경에서 패딩과 배치를 조정합니다. */
+        @media (max-width: 768px) {
+            .chat-wrapper {
+                padding: 1.75rem 1rem 8.5rem;
             }
 
-            .hero-card {
-                padding: 1.75rem;
+            .chat-header {
+                padding: 1.75rem 1.5rem;
             }
 
-            .hero-stat {
-                text-align: left;
-            }
-
-            .workspace-grid {
-                grid-template-columns: 1fr;
+            .chat-bubble {
+                padding: 1.35rem;
             }
         }
     </style>
 </head>
 <body>
-<div class="dashboard-shell">
-    <!-- ✅ 콘솔의 첫 화면을 영웅 카드로 구성해 기능과 상태를 직관적으로 보여줍니다. -->
-    <header class="glass-card hero-card">
-        <div>
-            <h1 class="fw-bold mb-3">문서 관리 콘솔</h1>
-            <p class="mb-2">문서를 업로드하고 검색하며, RAG 질의를 빠르게 실행해 보세요.</p>
-            <p class="mb-0">업로드와 질의가 하나의 공간에서 이뤄지도록 ChatGPT와 유사한 집중형 레이아웃을 적용했습니다.</p>
-        </div>
-        <div class="hero-stat">
+<div class="chat-wrapper">
+    <!-- ✅ 상단 헤더: 현재 문서 상태와 간단한 설명을 제공합니다. -->
+    <header class="chat-header">
+        <div class="chat-header-top">
+            <div>
+                <h1 class="fw-bold mb-3">문서 관리 콘솔</h1>
+                <p class="mb-2 text-muted">ChatGPT 스타일 콘솔에서 문서를 업로드하고 검색하며 질문할 수 있습니다.</p>
+                <p class="mb-0 text-muted">모든 주요 동작은 하단 버튼을 통해 실행됩니다.</p>
+            </div>
             <span class="stat-badge">
-                <!-- ✅ 전체 문서 수를 강조 배지로 노출합니다. -->
                 <span class="fw-semibold">전체 문서</span>
-                <span class="fs-5" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')}">0</span>
+                <span class="fs-4" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')}">0</span>
             </span>
-            <small class="text-muted">업로드 현황을 실시간으로 확인하세요.</small>
         </div>
     </header>
 
-    <!-- ✅ 알림 메시지를 부트스트랩 Alert로 노출합니다. -->
-    <div th:if="${alertMessage}" class="alert" th:classappend=" ' alert-' + (${alertType} ?: 'info') " role="alert" th:text="${alertMessage}"></div>
+    <main class="chat-feed">
+        <!-- ✅ 알림 메시지가 존재하면 채팅 버블로 출력합니다. -->
+        <section th:if="${alertMessage}" class="chat-bubble">
+            <div th:class="${'alert alert-' + (alertType ?: 'info')} mb-0" role="alert" th:text="${alertMessage}"></div>
+        </section>    
 
-    <!-- ✅ 업로드 직후 미리보기 정보를 표 형태로 보여줍니다. -->
-    <div th:if="${uploadResult}" class="glass-card mb-4 p-4">
-        <h2 class="h5 fw-bold mb-3">업로드 결과</h2>
-        <dl class="row mb-0">
-            <dt class="col-sm-3">UUID</dt>
-            <dd class="col-sm-9" th:text="${uploadResult.uuid}"></dd>
-            <dt class="col-sm-3">파일명</dt>
-            <dd class="col-sm-9" th:text="${uploadResult.fileName}"></dd>
-            <dt class="col-sm-3">미리보기</dt>
-            <dd class="col-sm-9"><pre th:text="${uploadResult.previewText}"></pre></dd>
-        </dl>
+        <!-- ✅ 업로드 결과가 있을 경우 상세 정보를 제공하는 버블을 추가합니다. -->
+        <section th:if="${uploadResult}" class="chat-bubble">
+            <h2 class="h5 fw-bold mb-3">업로드 완료</h2>
+            <dl class="row mb-0">
+                <dt class="col-sm-3">UUID</dt>
+                <dd class="col-sm-9" th:text="${uploadResult.uuid}"></dd>
+                <dt class="col-sm-3">파일명</dt>
+                <dd class="col-sm-9" th:text="${uploadResult.fileName}"></dd>
+                <dt class="col-sm-3">미리보기</dt>
+                <dd class="col-sm-9"><pre th:text="${uploadResult.previewText}"></pre></dd>
+            </dl>
+        </section>
+        <!-- ✅ 질의 결과가 존재하면 대화 응답처럼 노출합니다. -->
+        <section th:if="${askResult}" class="chat-bubble">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                <h2 class="h5 fw-bold mb-0">질의 응답</h2>
+                <span class="badge text-bg-info" th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></span>
+             </div>
+            <pre class="mb-0" th:text="${askResult}"></pre>
+        </section>
+        <!-- ✅ 최근 업로드 문서를 요약해 보여주는 버블입니다. -->
+        <section class="chat-bubble">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <div>
+                    <h2 class="h5 fw-bold mb-1">최근 문서 하이라이트</h2>
+                    <small class="text-muted">상세 목록과 검색은 하단 버튼을 통해 확인할 수 있습니다.</small>
+                 </div>
+                <span class="badge text-bg-light" th:text="${#temporals.format(#temporals.createNow(), 'yyyy-MM-dd HH:mm')}"
+                      >--:--</span>
+             </div>
+            <div th:if="${#lists.isEmpty(documents)}" class="text-muted">현재 등록된 문서가 없습니다. 하단의 [+ 업로드] 버튼을 눌러 문서를 추가하세요.</div>
+            <ul class="list-unstyled mb-0" th:if="${!#lists.isEmpty(documents)}">
+                <li class="mb-3" th:each="doc,iterStat : ${documents}" th:if="${iterStat.index < 3}">
+                    <div class="fw-semibold" th:text="${doc.fileName}"></div>
+                    <div class="small text-muted" th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></div>
+                    <div class="small text-muted" th:text="${doc.description}"></div>
+                </li>
+                <li th:if="${documents.size() > 3}" class="text-muted small">그 외 <span th:text="${documents.size() - 3}"></span>건의 문서가 있습니다. 하단 버튼으로 전체 목록을 확인하세요.</li>
+            </ul>
+        </section>
+    </main>
+</div>
+<!-- ✅ 문서 업로드를 위한 모달 영역을 정의합니다. -->
+<div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content modal-card">
+            <div class="modal-header border-0">
+                <h1 class="modal-title fs-5" id="uploadModalLabel">문서 업로드</h1>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <!-- ✅ 문서 업로드 폼을 제공하여 선택한 파일과 설명을 전송합니다. -->
+                <form th:action="@{/documents/upload}" method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">파일</label>
+                        <input type="file" class="form-control" id="file" name="file" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">설명</label>
+                        <input type="text" class="form-control" id="description" name="description" placeholder="파일 설명을 입력하세요">
+                    </div>
+                    <div class="mb-4">
+                        <label for="uploadedBy" class="form-label">업로더</label>
+                        <input type="text" class="form-control" id="uploadedBy" name="uploadedBy" value="system">
+                    </div>
+                    <div class="text-end">
+                        <button type="submit" class="btn btn-primary">업로드</button>
+                    </div>
+                </form>
+             </div>
+         </div>
     </div>
-
-    <div class="workspace-grid">
-        <div class="glass-card">
-            <div class="card h-100">
-                <div class="card-header">문서 업로드</div>
-                <div class="card-body">
-                    <!-- ✅ 업로드 폼에서 검색 조건을 함께 유지하기 위해 hidden 입력을 둡니다. -->
-                    <form th:action="@{/documents/upload}" method="post" enctype="multipart/form-data">
-                        <div class="mb-3">
-                            <label for="file" class="form-label">파일</label>
-                            <input type="file" class="form-control" id="file" name="file" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="description" class="form-label">설명</label>
-                            <input type="text" class="form-control" id="description" name="description" placeholder="파일 설명을 입력하세요">
-                        </div>
-                        <div class="mb-3">
-                            <label for="uploadedBy" class="form-label">업로더</label>
-                            <input type="text" class="form-control" id="uploadedBy" name="uploadedBy" value="system">
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100">업로드</button>
-                    </form>
-                </div>
-            </div>
-
-            <div class="card mt-4">
-                <div class="card-header">전체 문서 질의</div>
-                <div class="card-body">
-                    <!-- ✅ 전체 문서를 대상으로 RAG 질의를 수행하는 폼입니다. -->
-                    <form th:action="@{/documents/ask}" method="post">
-                        <div class="mb-3">
-                            <label for="globalQuestion" class="form-label">질문</label>
-                            <textarea class="form-control" id="globalQuestion" name="question" rows="3" placeholder="모든 문서에 대해 질문을 입력하세요" required></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-outline-primary w-100">질문하기</button>
-                    </form>
-                </div>
-            </div>
-
-            <!-- ✅ 질의 결과가 있을 때 별도 카드로 표시합니다. -->
-            <div th:if="${askResult}" class="card mt-4 border-info">
-                <div class="card-header bg-info text-white">질의 결과</div>
-                <div class="card-body">
-                    <p class="mb-1 text-muted">
-                        <strong th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></strong>
-                    </p>
-                    <pre th:text="${askResult}"></pre>
-                </div>
-            </div>
-        </div>
-
-        <div class="glass-card">    
-            <div class="card mb-4">
-                <div class="card-header">문서 검색</div>
-                <div class="card-body">
-                    <!-- ✅ 검색 폼은 GET 방식을 사용해 페이지 이동과 조건 유지가 용이하도록 합니다. -->
-                    <form method="get" th:action="@{/documents}">
-                        <div class="row g-3 align-items-end">
-                            <div class="col-md-3">
-                                <label for="searchFileName" class="form-label">파일명</label>
-                                <input type="text" class="form-control" id="searchFileName" name="fileName" th:value="${searchParams.fileName}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="searchUploadedBy" class="form-label">업로더</label>
-                                <input type="text" class="form-control" id="searchUploadedBy" name="uploadedBy" th:value="${searchParams.uploadedBy}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="searchFrom" class="form-label">업로드 시작일</label>
-                                <input type="date" class="form-control" id="searchFrom" name="uploadedFrom" th:value="${searchParams.uploadedFrom}">
-                            </div>
-                            <div class="col-md-3">
-                                <label for="searchTo" class="form-label">업로드 종료일</label>
-                                <input type="date" class="form-control" id="searchTo" name="uploadedTo" th:value="${searchParams.uploadedTo}">
-                            </div>
-                            <div class="col-12 text-end">
-                                <button type="submit" class="btn btn-secondary">검색</button>
-                                <a class="btn btn-outline-secondary" th:href="@{/documents}">초기화</a>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="card documents-panel">
-                <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
-                    <div>
-                        <h2 class="h5 fw-bold mb-0">문서 목록</h2>
-                        <small class="text-muted">최근 업로드된 문서를 한눈에 확인하세요.</small>
+</div>
+<!-- ✅ 문서 검색과 목록 확인을 위한 모달입니다. -->
+<div class="modal fade" id="searchModal" tabindex="-1" aria-labelledby="searchModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-fullscreen-md-down modal-xl">
+        <div class="modal-content modal-card">
+            <div class="modal-header border-0">
+                <h1 class="modal-title fs-5" id="searchModalLabel">문서 검색 및 목록</h1>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+             </div>
+            <div class="modal-body">
+                <!-- ✅ 검색 폼을 통해 조건을 입력하고 페이지 전체를 갱신합니다. -->
+                <form class="row g-3 mb-4" method="get" th:action="@{/documents}">
+                    <div class="col-md-3">
+                        <label for="searchFileName" class="form-label">파일명</label>
+                        <input type="text" class="form-control" id="searchFileName" name="fileName" th:value="${searchParams.fileName}">
+                     </div>
+                    <div class="col-md-3">
+                        <label for="searchUploadedBy" class="form-label">업로더</label>
+                        <input type="text" class="form-control" id="searchUploadedBy" name="uploadedBy" th:value="${searchParams.uploadedBy}">
                     </div>
-                    <span class="stat-badge" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')} + '건'">0건</span>
-                </div>
-                <div class="table-responsive">
-                    <!-- ✅ 문서 목록을 표로 그려 업로드 정보와 액션 버튼을 제공합니다. -->
-                    <table class="table table-hover align-middle mb-0"></table>
-                        <thead>
-                        <tr>
-                            <th>UUID</th>
-                            <th>파일명</th>
-                            <th>업로더</th>
-                            <th>업로드 일시</th>
-                            <th class="text-end">크기(bytes)</th>
-                            <th class="text-center">작업</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        <tr th:if="${#lists.isEmpty(documents)}">
-                            <td colspan="6" class="text-center text-muted">조회된 문서가 없습니다.</td>
-                        </tr>
-                        <tr th:each="doc : ${documents}">
-                            <td class="small text-break" th:text="${doc.uuid}"></td>
-                            <td>
-                                <div class="fw-semibold" th:text="${doc.fileName}"></div>
-                                <div class="text-muted small" th:text="${doc.description}"></div>
-                            </td>
-                            <td th:text="${doc.uploadedBy}"></td>
-                            <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
-                            <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
-                            <td class="text-center">
-                                <div class="btn-group btn-group-sm" role="group">
-                                    <a class="btn btn-outline-secondary" th:href="@{'/api/documents/download/' + ${doc.uuid}}" target="_blank">다운로드</a>
-                                </div>
-                                <div class="mt-2">
-                                    <!-- ✅ 특정 문서를 대상으로 질의를 보낼 수 있는 폼입니다. -->
-                                    <form class="d-flex" th:action="@{'/documents/' + ${doc.uuid} + '/ask'}" method="post">
-                                        <input type="text" name="question" class="form-control form-control-sm me-2" placeholder="이 문서에 질문" required>
-                                        <button type="submit" class="btn btn-sm btn-outline-primary">질문</button>
-                                    </form>
-                                </div>
-                                <div class="mt-2">
-                                    <!-- ✅ 삭제 작업은 POST 요청으로 보호하며 확인 다이얼로그를 제공합니다. -->
-                                    <form th:action="@{'/documents/' + ${doc.uuid} + '/delete'}" method="post" onsubmit="return confirm('문서를 삭제하시겠습니까?');">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger w-100">삭제</button>
-                                    </form>
-                                </div>
-                            </td>
-                        </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- ✅ 페이지 네비게이션 영역을 구성합니다. -->
-                <div class="card-footer mt-4 px-0 border-0">
-                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-                        <div class="text-muted">
-                            <span th:text="${page.page + 1}"></span>
-                            /
-                            <span th:text="${page.totalPages == 0 ? 1 : page.totalPages}"></span>
-                            페이지
-                        </div>
-                        <nav>
-                            <ul class="pagination mb-0">
-                                <li class="page-item" th:classappend="${page.first} ? ' disabled'">
-                                    <a class="page-link" th:href="@{/documents(page=${page.page - 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">이전</a>
-                                </li>
-                                <li class="page-item" th:each="pageNumber : ${pageNumbers}" th:classappend="${pageNumber == page.page} ? ' active'">
-                                    <a class="page-link" th:text="${pageNumber + 1}" th:href="@{/documents(page=${pageNumber}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}"></a>
-                                </li>
-                                <li class="page-item" th:classappend="${page.last} ? ' disabled'">
-                                    <a class="page-link" th:href="@{/documents(page=${page.page + 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">다음</a>
-                                </li>
-                            </ul>
-                        </nav>
+                    <div class="col-md-3">
+                        <label for="searchFrom" class="form-label">업로드 시작일</label>
+                        <input type="date" class="form-control" id="searchFrom" name="uploadedFrom" th:value="${searchParams.uploadedFrom}">
                     </div>
-                </div>
+                    <div class="col-md-3">
+                        <label for="searchTo" class="form-label">업로드 종료일</label>
+                        <input type="date" class="form-control" id="searchTo" name="uploadedTo" th:value="${searchParams.uploadedTo}">
+                    </div>
+                    <div class="col-12 text-end">
+                        <button type="submit" class="btn btn-secondary">검색</button>
+                        <a class="btn btn-outline-secondary" th:href="@{/documents}">초기화</a>
+                    </div>
+                </form>
+
+                <!-- ✅ 전체 문서 목록을 표 형태로 보여주며 스크롤을 지원합니다. -->
+                <div class="table-scroll mb-3">
+                    <table class="table align-middle">
+                        <thead class="table-light">
+                         <tr>
+                             <th>UUID</th>
+                             <th>파일명</th>
+                             <th>업로더</th>
+                             <th>업로드 일시</th>
+                             <th class="text-end">크기(bytes)</th>
+                             <th class="text-center">작업</th>
+                         </tr>
+                         </thead>
+                         <tbody>
+                         <tr th:if="${#lists.isEmpty(documents)}">
+                             <td colspan="6" class="text-center text-muted">조회된 문서가 없습니다.</td>
+                         </tr>
+                         <tr th:each="doc : ${documents}">
+                             <td class="small text-break" th:text="${doc.uuid}"></td>
+                             <td>
+                                 <div class="fw-semibold" th:text="${doc.fileName}"></div>
+                                 <div class="text-muted small" th:text="${doc.description}"></div>
+                             </td>
+                             <td th:text="${doc.uploadedBy}"></td>
+                             <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
+                             <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
+                             <td class="text-center">
+                                 <div class="btn-group btn-group-sm" role="group">
+                                     <a class="btn btn-outline-secondary" th:href="@{'/api/documents/download/' + ${doc.uuid}}" target="_blank">다운로드</a>
+                                 </div>
+                                 <div class="mt-2">
+                                    <!-- ✅ 문서별 질의 입력을 통해 선택한 문서에 질문을 보낼 수 있습니다. -->
+                                     <form class="d-flex" th:action="@{'/documents/' + ${doc.uuid} + '/ask'}" method="post">
+                                         <input type="text" name="question" class="form-control form-control-sm me-2" placeholder="이 문서에 질문" required>
+                                         <button type="submit" class="btn btn-sm btn-outline-primary">질문</button>
+                                     </form>
+                                 </div>
+                                 <div class="mt-2">
+                                    <!-- ✅ 삭제 폼은 사용자 확인을 거친 후 요청을 전송합니다. -->
+                                     <form th:action="@{'/documents/' + ${doc.uuid} + '/delete'}" method="post" onsubmit="return confirm('문서를 삭제하시겠습니까?');">
+                                         <button type="submit" class="btn btn-sm btn-outline-danger w-100">삭제</button>
+                                     </form>
+                                 </div>
+                             </td>
+                         </tr>
+                         </tbody>
+                     </table>
+                 </div>
+                <!-- ✅ 페이지 네비게이션을 모달 하단에 유지합니다. -->
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                    <div class="text-muted">
+                        <span th:text="${page.page + 1}"></span>
+                        /
+                        <span th:text="${page.totalPages == 0 ? 1 : page.totalPages}"></span>
+                        페이지
+                     </div>
+                    <nav>
+                        <ul class="pagination mb-0">
+                            <li class="page-item" th:classappend="${page.first} ? ' disabled'">
+                                <a class="page-link"
+                                   th:href="@{/documents(page=${page.page - 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">이전</a>
+                            </li>
+                            <li class="page-item" th:each="pageNumber : ${pageNumbers}" th:classappend="${pageNumber == page.page} ? ' active'">
+                                <a class="page-link" th:text="${pageNumber + 1}"
+                                   th:href="@{/documents(page=${pageNumber}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}"></a>
+                            </li>
+                            <li class="page-item" th:classappend="${page.last} ? ' disabled'">
+                                <a class="page-link"
+                                   th:href="@{/documents(page=${page.page + 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">다음</a>
+                            </li>
+                        </ul>
+                    </nav>
+                 </div>
+             </div>
+         </div>
+     </div>
+ </div>
+ 
+<!-- ✅ 전체 문서 또는 특정 문서를 대상으로 질문을 던질 수 있는 모달입니다. -->
+<div class="modal fade" id="askModal" tabindex="-1" aria-labelledby="askModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content modal-card">
+            <div class="modal-header border-0">
+                <h1 class="modal-title fs-5" id="askModalLabel">문서에 질문하기</h1>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <!-- ✅ 전체 문서 대상 질의 입력 영역입니다. -->
+                <form th:action="@{/documents/ask}" method="post" class="mb-4">
+                    <label for="globalQuestion" class="form-label">전체 문서에 질문</label>
+                    <textarea class="form-control" id="globalQuestion" name="question" rows="3" placeholder="모든 문서에 대해 질문을 입력하세요" required></textarea>
+                    <div class="text-end mt-3">
+                        <button type="submit" class="btn btn-outline-primary">질문하기</button>
+                    </div>
+                </form>
+
+                <!-- ✅ 특정 문서를 선택해 질문할 수 있도록 드롭다운을 제공합니다. -->
+               <form id="targetAskForm" method="post" th:attr="data-action-base=@{/documents/}">
+                    <div class="mb-3">
+                        <label for="targetDocument" class="form-label">질문할 문서 선택</label>
+                        <select class="form-select" id="targetDocument" name="uuid" required>
+                            <option value="" disabled selected>문서를 선택하세요</option>
+                            <option th:each="doc : ${documents}" th:value="${doc.uuid}" th:text="${doc.fileName}"></option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="targetQuestion" class="form-label">질문 내용</label>
+                        <textarea class="form-control" id="targetQuestion" name="question" rows="3" placeholder="선택한 문서에 대한 질문을 입력하세요" required></textarea>
+                    </div>
+                    <div class="text-end">
+                        <button type="submit" class="btn btn-outline-primary">질문하기</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
-</body>
-</html>
+<!-- ✅ 하단 고정 버튼 바: 모든 주요 액션을 여기서 실행합니다. -->
+<footer class="chat-footer">
+    <div class="action-bar">
+        <button class="btn btn-plus" data-bs-toggle="modal" data-bs-target="#uploadModal">＋ 업로드</button>
+        <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#searchModal">문서 검색 / 목록</button>
+        <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#askModal">문서 질문</button>
+    </div>
+</footer>
+
+ <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script>
+        // ✅ 특정 문서 질문 폼을 제출하기 전에 선택된 UUID에 맞춰 요청 URL을 갱신합니다.
+        document.addEventListener('DOMContentLoaded', function () {
+            var targetAskForm = document.getElementById('targetAskForm');
+            if (!targetAskForm) {
+                return;
+            }
+            targetAskForm.addEventListener('submit', function (event) {
+                var selectEl = document.getElementById('targetDocument');
+                if (!selectEl || !selectEl.value) {
+                    event.preventDefault();
+                    return;
+                }
+                var base = targetAskForm.dataset.actionBase || '/documents/';
+                targetAskForm.action = base + selectEl.value + '/ask';
+            });
+        });
+    </script>
+ </body>
+ </html>
