@@ -4,7 +4,16 @@ import com.buhmwoo.oneask.common.config.OneAskProperties;
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
+import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ 통일된 질문 응답 포맷을 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerSourceDto; // ✅ 검색된 출처 정보를 DTO로 변환하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+import com.buhmwoo.oneask.modules.document.application.question.DocumentRetrievalRequest; // ✅ 검색 단계 호출을 위해 요청 DTO를 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.DocumentRetrievalResult; // ✅ 검색 결과 DTO를 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.DocumentRetriever; // ✅ 검색 모듈 인터페이스를 주입받기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.GptClient; // ✅ GPT 호출 모듈을 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.GptRequest; // ✅ GPT 요청 DTO를 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.GptResponse; // ✅ GPT 응답 DTO를 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.QuestionAnswerCache; // ✅ 질문 응답 캐시 컴포넌트를 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.domain.Document;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
+
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,17 +61,14 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
     private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);
 
-    private final DocumentRepository documentRepository;
-    private final OneAskProperties props;
+    private final DocumentRepository documentRepository; // ✅ 문서 메타데이터를 관리하는 JPA 저장소입니다.
+    private final OneAskProperties props; // ✅ 스토리지 및 RAG 백엔드 설정을 보관합니다.
+    private final WebClient ragWebClient; // ✅ RAG 백엔드와 통신할 공용 WebClient입니다.
+    private final DocumentRetriever documentRetriever; // ✅ 검색 단계를 담당하는 모듈입니다.
+    private final GptClient gptClient; // ✅ GPT 응답 생성을 담당하는 모듈입니다.
+    private final QuestionAnswerCache questionAnswerCache; // ✅ 반복 질문에 대한 캐시를 제공합니다.
 
-    private final WebClient webClient = WebClient.builder()
-            .clientConnector(new ReactorClientHttpConnector(
-                    HttpClient.create().responseTimeout(Duration.ofSeconds(120))
-            ))
-            .exchangeStrategies(ExchangeStrategies.builder()
-                    .codecs(c -> c.defaultCodecs().maxInMemorySize(256 * 1024 * 1024))
-                    .build())
-            .build();
+    private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
     @Override // ✅ 인터페이스 계약을 충실히 따르고 있음을 표시합니다.
@@ -151,7 +157,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     mb.part("docId", uuid)
                       .contentType(MediaType.TEXT_PLAIN);
 
-                    webClient.post()
+                    ragWebClient.post()
                         .uri(url)
                         .contentType(MediaType.MULTIPART_FORM_DATA)
                         .bodyValue(mb.build())
@@ -231,45 +237,69 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         }
     }
 
-    /** 문서 기반 질의: FastAPI /query (UUID 가 없으면 전체 문서 대상) */
+    /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
     @Override // ✅ 질의 처리 로직이 인터페이스 계약을 따른다는 것을 나타냅니다.
-    public ApiResponseDto<String> ask(String uuid, String question) {
+    public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question) {
+        if (!StringUtils.hasText(question)) {
+            return ApiResponseDto.fail("질의 실패: 질문이 비어 있습니다."); // ✅ 필수 파라미터 누락을 즉시 안내합니다.
+        }
+
+        String docId = StringUtils.hasText(uuid) ? uuid : null; // ✅ 문서 ID가 비어 있으면 전체 검색으로 전환합니다.
         try {
-            String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
-            if (ragBase.isBlank()) return ApiResponseDto.fail("질의 실패: custom.rag.backend-url 이 비었습니다.");
-            
-            System.out.println("[DEBUG] RAG Base URL: " + ragBase);  // ← 로그 추가
-
-            String url = ragBase + "/query";
-
-            System.out.println("[DEBUG] Full URL: " + url);  // ← 로그 추가
-
-            Map<String, Object> req = new HashMap<>();
-            req.put("question", question);
-            if (uuid != null && !uuid.isBlank()) {
-                req.put("docId", uuid);  // ✅ UUID 가 전달된 경우에만 특정 문서로 검색 범위를 제한하도록 요청 본문에 추가합니다.
+            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, question); // ✅ 동일 질의에 대한 캐시를 확인합니다.
+            if (cached.isPresent()) {
+                return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
             }
-            req.put("top_k", 3);
-            
-            System.out.println("[DEBUG] Request body: " + req);  // ← 로그 추가
 
-            String answer = webClient.post()
-                    .uri(url)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(req)
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .doOnError(e -> System.err.println("[ERROR] WebClient error: " + e.getMessage()))  // ← 에러 로그
-                    .map(m -> String.valueOf(m.get("answer")))
-                    .block(Duration.ofSeconds(120));
-                 
-            if (answer == null) return ApiResponseDto.fail("응답 실패: answer 없음");
-            return ApiResponseDto.ok(answer, "응답 성공");
+            DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
+            DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
+
+            DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
+            DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
+
+            if (gptResponse.answer() == null || gptResponse.answer().isBlank()) {
+                return ApiResponseDto.fail("질의 실패: GPT 응답이 비어 있습니다."); // ✅ 의미 있는 답변이 없는 경우 실패로 간주합니다.            
+            }
+            List<QuestionAnswerSourceDto> sources = retrievalResult.matches().stream()
+                    .map(match -> QuestionAnswerSourceDto.builder()
+                            .reference(match.reference())
+                            .source(match.source())
+                            .page(match.page())
+                            .preview(match.preview())
+                            .build())
+                    .toList(); // ✅ 검색된 청크를 앱에서 활용할 수 있는 출처 DTO 목록으로 변환합니다.
+
+            QuestionAnswerResponseDto payload = QuestionAnswerResponseDto.builder()
+                    .title(buildAnswerTitle(question, sources))
+                    .answer(gptResponse.answer())
+                    .sources(sources)
+                    .fromCache(false)
+                    .build(); // ✅ 앱에 필요한 응답 본문과 출처 정보를 모두 포함합니다.
+
+            questionAnswerCache.put(docId, question, payload); // ✅ 후속 질의에 대비해 캐시에 저장합니다.
+            return ApiResponseDto.ok(payload, "응답 성공");
 
         } catch (Exception e) {
-            log.error("문서 질의 실패: {}", e.getMessage());
+            log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
             return ApiResponseDto.fail("질의 실패: " + e.getMessage());
         }
+    }
+
+    /**
+     * 질문 내용과 대표 출처를 활용해 앱 카드 상단에 노출할 제목을 생성합니다. // ✅ 응답 가독성을 높이기 위한 헬퍼 메서드임을 설명합니다.
+     */
+    private String buildAnswerTitle(String question, List<QuestionAnswerSourceDto> sources) {
+        String sanitizedQuestion = question == null ? "" : question.trim(); // ✅ 공백을 제거해 깔끔한 질문 텍스트를 준비합니다.
+        if (sanitizedQuestion.isEmpty()) {
+            return "질문 응답"; // ✅ 질문이 비어 있을 때는 기본 제목을 제공해 UI 공백을 방지합니다.
+        }
+        if (sources != null && !sources.isEmpty()) {
+            String source = sources.get(0).getSource(); // ✅ 대표 출처를 가져와 제목 앞부분에 노출합니다.
+            if (source != null && !source.isBlank()) {
+                return source + " · " + sanitizedQuestion; // ✅ 출처와 질문을 조합해 어떤 문서를 참고했는지 드러냅니다.
+            }
+        }
+        return sanitizedQuestion; // ✅ 출처가 없으면 질문 자체를 제목으로 사용합니다.
     }
 
     /** 문서 삭제: 스토리지/DB/RAG 인덱스에서 모두 정리한다. */
@@ -308,7 +338,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             Map<String, Object> req = new HashMap<>();
             req.put("docId", uuid);
             try {
-                Map<?, ?> ragResponse = webClient.post()
+                Map<?, ?> ragResponse = ragWebClient.post()
                         .uri(url)
                         .contentType(MediaType.APPLICATION_JSON)
                         .bodyValue(req)

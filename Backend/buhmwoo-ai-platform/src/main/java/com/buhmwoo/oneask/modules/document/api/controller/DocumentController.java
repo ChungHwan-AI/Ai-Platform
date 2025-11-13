@@ -4,6 +4,7 @@ import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
+import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ GPT 응답 포맷을 재사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -100,14 +101,14 @@ public class DocumentController {
     @Operation(summary = "문서 기반 질문", description = "업로드된 문서(UUID) 범위에서 질문에 답합니다.")
 
     @GetMapping("/{uuid}/ask")
-    public ApiResponseDto<String> ask(@PathVariable String uuid, @RequestParam String question) {
+    public ApiResponseDto<QuestionAnswerResponseDto> ask(@PathVariable String uuid, @RequestParam String question) {
         return documentService.ask(uuid, question);
     }
 
     @Operation(summary = "문서 전체 질문", description = "특정 문서를 지정하지 않고 업로드된 모든 문서를 대상으로 질문에 답합니다.")
 
     @GetMapping("/ask")
-    public ApiResponseDto<String> askAll(@RequestParam String question) {
+    public ApiResponseDto<QuestionAnswerResponseDto> askAll(@RequestParam String question) {
         return documentService.ask(null, question);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
     }
     

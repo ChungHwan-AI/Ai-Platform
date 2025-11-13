@@ -178,6 +178,28 @@ class QueryResponse(BaseModel):
         description="벡터 검색으로 선택된 청크 목록",
     )
 
+class RetrieveResponse(BaseModel):
+    """/query/retrieve 응답 스키마 정의"""
+
+    matches: List[Match] = Field(
+        default_factory=list,
+        description="벡터 검색으로 선택된 청크 목록",
+    )
+    context: str = Field(..., description="GPT 프롬프트에 사용할 컨텍스트 전체 텍스트")
+
+
+class GenerateRequest(BaseModel):
+    """/query/generate 요청 스키마 정의"""
+
+    question: str = Field(..., description="사용자가 던진 질문 문장")
+    context: str = Field(..., description="벡터 검색 결과를 하나의 텍스트로 결합한 컨텍스트")
+
+
+class GenerateResponse(BaseModel):
+    """/query/generate 응답 스키마 정의"""
+
+    answer: str = Field(..., description="LLM이 생성한 최종 응답")
+
 # 문서 삭제 요청을 위한 스키마 정의
 class DocDeleteRequest(BaseModel):
     """벡터 DB에서 삭제할 문서 조건을 표현하는 모델"""
@@ -653,6 +675,63 @@ async def upload(
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
 
 # 문서 관련 질의 응답 
+@app.post(
+    "/query/retrieve",
+    response_model=RetrieveResponse,
+    summary="벡터 검색 결과만 반환",
+    tags=["rag"],
+)
+async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
+    """문서 검색 단계만 수행하여 컨텍스트와 매치 목록을 반환"""
+
+    try:
+        metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
+
+        docs = query_text(
+            payload.question,
+            k=payload.top_k,
+            metadata_filter=metadata_filter,
+        )
+
+        context_chunks, context_text = _prepare_prompt_context(docs)
+
+        matches = [
+            Match(
+                reference=chunk.reference,
+                chunk_index=chunk.chunk_index,
+                content=chunk.body,
+                preview=chunk.preview,
+                source=chunk.source,
+                page=chunk.page,
+                metadata=chunk.metadata,
+            )
+            for chunk in context_chunks
+        ]
+
+        return RetrieveResponse(matches=matches, context=context_text)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"retrieve failed: {e}")
+
+
+@app.post(
+    "/query/generate",
+    response_model=GenerateResponse,
+    summary="검색 컨텍스트로 LLM 답변 생성",
+    tags=["rag"],
+)
+async def query_generate(payload: GenerateRequest) -> GenerateResponse:
+    """검색된 컨텍스트를 기반으로 LLM 답변만 생성"""
+
+    try:
+        answer_text = _generate_answer(payload.question, payload.context)
+        return GenerateResponse(answer=answer_text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"generate failed: {e}")
 @app.post(
     "/query",
     response_model=QueryResponse,
