@@ -88,6 +88,52 @@
             border-top: 1px solid rgba(203, 213, 225, 0.7);
             backdrop-filter: blur(14px);
             padding: 1.25rem 1rem;
+            display: flex; /* ✅ 질문 입력과 버튼 묶음을 세로로 쌓아 배치합니다. */
+            justify-content: center; /* ✅ 중앙 정렬을 유지해 안정적인 구성을 만듭니다. */
+        }
+
+        /* ✅ 하단 고정 영역 내부 너비와 간격을 제어하는 컨테이너입니다. */
+        .footer-inner {
+            width: min(900px, 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin: 0 auto;
+        }
+
+        /* ✅ 질문 입력 박스 전반의 배경과 여백을 정의합니다. */
+        .question-box {
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(203, 213, 225, 0.6);
+            border-radius: 1rem;
+            padding: 1rem 1.25rem;
+            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+        }
+
+        /* ✅ 질문 폼을 반응형으로 가로·세로 배치할 수 있도록 구성합니다. */
+        .question-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        /* ✅ 질문 입력창의 높이와 테두리를 조정해 일관된 스타일을 유지합니다. */
+        .question-form textarea {
+            min-height: 100px;
+            border-radius: 0.85rem;
+            border: 1px solid rgba(148, 163, 184, 0.6);
+            resize: vertical;
+        }
+
+        /* ✅ 질문 대상 안내 문구를 강조하기 위한 스타일입니다. */
+        .question-target {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            color: #1f2937;            
         }
 
         /* ✅ 하단 버튼 바의 중앙 정렬과 버튼 간격을 조정합니다. */
@@ -122,6 +168,22 @@
             font-weight: 600;
         }
 
+        /* ✅ 검색 결과 행을 선택했을 때 시각적으로 표시해 주는 스타일입니다. */
+        .document-row-active {
+            outline: 2px solid rgba(37, 99, 235, 0.65);
+            outline-offset: -2px;
+            background: rgba(59, 130, 246, 0.08);
+        }
+
+        /* ✅ 상세 정보 패널의 레이아웃과 배경을 정의합니다. */
+        .detail-panel {
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.85);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
         /* ✅ 모달 내부의 카드 스타일을 통일합니다. */
         .modal-card {
             background: rgba(248, 250, 252, 0.88);
@@ -149,6 +211,9 @@
             .chat-bubble {
                 padding: 1.35rem;
             }
+            .question-form {
+                flex-direction: column;
+            }            
         }
     </style>
 </head>
@@ -285,50 +350,63 @@
                 <div class="table-scroll mb-3">
                     <table class="table align-middle">
                         <thead class="table-light">
-                         <tr>
-                             <th>UUID</th>
-                             <th>파일명</th>
-                             <th>업로더</th>
-                             <th>업로드 일시</th>
-                             <th class="text-end">크기(bytes)</th>
-                             <th class="text-center">작업</th>
-                         </tr>
-                         </thead>
-                         <tbody>
-                         <tr th:if="${#lists.isEmpty(documents)}">
-                             <td colspan="6" class="text-center text-muted">조회된 문서가 없습니다.</td>
-                         </tr>
-                         <tr th:each="doc : ${documents}">
-                             <td class="small text-break" th:text="${doc.uuid}"></td>
-                             <td>
-                                 <div class="fw-semibold" th:text="${doc.fileName}"></div>
-                                 <div class="text-muted small" th:text="${doc.description}"></div>
-                             </td>
-                             <td th:text="${doc.uploadedBy}"></td>
-                             <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
-                             <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
-                             <td class="text-center">
-                                 <div class="btn-group btn-group-sm" role="group">
-                                     <a class="btn btn-outline-secondary" th:href="@{'/api/documents/download/' + ${doc.uuid}}" target="_blank">다운로드</a>
-                                 </div>
-                                 <div class="mt-2">
-                                    <!-- ✅ 문서별 질의 입력을 통해 선택한 문서에 질문을 보낼 수 있습니다. -->
-                                     <form class="d-flex" th:action="@{'/documents/' + ${doc.uuid} + '/ask'}" method="post">
-                                         <input type="text" name="question" class="form-control form-control-sm me-2" placeholder="이 문서에 질문" required>
-                                         <button type="submit" class="btn btn-sm btn-outline-primary">질문</button>
-                                     </form>
-                                 </div>
-                                 <div class="mt-2">
-                                    <!-- ✅ 삭제 폼은 사용자 확인을 거친 후 요청을 전송합니다. -->
-                                     <form th:action="@{'/documents/' + ${doc.uuid} + '/delete'}" method="post" onsubmit="return confirm('문서를 삭제하시겠습니까?');">
-                                         <button type="submit" class="btn btn-sm btn-outline-danger w-100">삭제</button>
-                                     </form>
-                                 </div>
-                             </td>
-                         </tr>
-                         </tbody>
-                     </table>
-                 </div>
+                        <tr>
+                            <th>UUID</th>
+                            <th>파일명</th>
+                            <th>업로더</th>
+                            <th>업로드 일시</th>
+                            <th class="text-end">크기(bytes)</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr th:if="${#lists.isEmpty(documents)}">
+                            <td colspan="5" class="text-center text-muted">조회된 문서가 없습니다.</td>
+                        </tr>
+                        <tr th:each="doc : ${documents}"
+                            th:attr="data-document-row=${doc.uuid}, data-document-name=${doc.fileName}, data-document-description=${doc.description}, data-document-uploaded-by=${doc.uploadedBy}, data-document-uploaded-at=${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}, data-document-size=${#numbers.formatInteger(doc.size, 1, 'COMMA')}"
+                            class="cursor-pointer">
+                            <td class="small text-break" th:text="${doc.uuid}"></td>
+                            <td>
+                                <div class="fw-semibold" th:text="${doc.fileName}"></div>
+                                <div class="text-muted small" th:text="${doc.description}"></div>
+                            </td>
+                            <td th:text="${doc.uploadedBy}"></td>
+                            <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
+                            <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- ✅ 선택한 문서의 상세 정보를 보여줄 패널을 제공합니다. -->
+                <div class="detail-panel mt-4" id="documentDetailPanel"
+                     th:attr="data-download-base=@{/api/documents/download/}, data-delete-base=@{/documents/}">
+                    <h3 class="h6 fw-bold mb-3">선택한 문서 상세</h3>
+                    <p class="text-muted mb-0" id="documentDetailPlaceholder">검색된 문서를 클릭하면 상세 정보와 사용 가능한 작업이 여기에 나타납니다.</p>
+                    <div id="documentDetailContent" class="d-none">
+                        <dl class="row mb-3">
+                            <dt class="col-sm-3">파일명</dt>
+                            <dd class="col-sm-9" id="detailFileName"></dd>
+                            <dt class="col-sm-3">UUID</dt>
+                            <dd class="col-sm-9" id="detailUuid"></dd>
+                            <dt class="col-sm-3">업로더</dt>
+                            <dd class="col-sm-9" id="detailUploadedBy"></dd>
+                            <dt class="col-sm-3">업로드 일시</dt>
+                            <dd class="col-sm-9" id="detailUploadedAt"></dd>
+                            <dt class="col-sm-3">설명</dt>
+                            <dd class="col-sm-9" id="detailDescription"></dd>
+                            <dt class="col-sm-3">크기</dt>
+                            <dd class="col-sm-9" id="detailSize"></dd>
+                        </dl>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a id="documentDownloadLink" class="btn btn-sm btn-outline-secondary disabled" href="#" target="_blank" aria-disabled="true">다운로드</a>
+                            <form id="documentDeleteForm" method="post" class="d-flex d-none"
+                                  onsubmit="return confirm('문서를 삭제하시겠습니까?');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
+                            </form>
+                        </div>
+                        <div class="alert alert-info small mt-3 mb-0" id="documentSelectionHint">선택된 문서는 하단 질문 영역에서 자동으로 대상 문서로 설정됩니다.</div>
+                    </div>
+                </div>
                 <!-- ✅ 페이지 네비게이션을 모달 하단에 유지합니다. -->
                 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
                     <div class="text-muted">
@@ -357,73 +435,208 @@
              </div>
          </div>
      </div>
- </div>
- 
-<!-- ✅ 전체 문서 또는 특정 문서를 대상으로 질문을 던질 수 있는 모달입니다. -->
-<div class="modal fade" id="askModal" tabindex="-1" aria-labelledby="askModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content modal-card">
-            <div class="modal-header border-0">
-                <h1 class="modal-title fs-5" id="askModalLabel">문서에 질문하기</h1>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
-            </div>
-            <div class="modal-body">
-                <!-- ✅ 전체 문서 대상 질의 입력 영역입니다. -->
-                <form th:action="@{/documents/ask}" method="post" class="mb-4">
-                    <label for="globalQuestion" class="form-label">전체 문서에 질문</label>
-                    <textarea class="form-control" id="globalQuestion" name="question" rows="3" placeholder="모든 문서에 대해 질문을 입력하세요" required></textarea>
-                    <div class="text-end mt-3">
-                        <button type="submit" class="btn btn-outline-primary">질문하기</button>
-                    </div>
-                </form>
-
-                <!-- ✅ 특정 문서를 선택해 질문할 수 있도록 드롭다운을 제공합니다. -->
-               <form id="targetAskForm" method="post" th:attr="data-action-base=@{/documents/}">
-                    <div class="mb-3">
-                        <label for="targetDocument" class="form-label">질문할 문서 선택</label>
-                        <select class="form-select" id="targetDocument" name="uuid" required>
-                            <option value="" disabled selected>문서를 선택하세요</option>
-                            <option th:each="doc : ${documents}" th:value="${doc.uuid}" th:text="${doc.fileName}"></option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="targetQuestion" class="form-label">질문 내용</label>
-                        <textarea class="form-control" id="targetQuestion" name="question" rows="3" placeholder="선택한 문서에 대한 질문을 입력하세요" required></textarea>
-                    </div>
-                    <div class="text-end">
-                        <button type="submit" class="btn btn-outline-primary">질문하기</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-</div>
-
+ </div> 
 <!-- ✅ 하단 고정 버튼 바: 모든 주요 액션을 여기서 실행합니다. -->
 <footer class="chat-footer">
-    <div class="action-bar">
-        <button class="btn btn-plus" data-bs-toggle="modal" data-bs-target="#uploadModal">＋ 업로드</button>
-        <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#searchModal">문서 검색 / 목록</button>
-        <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#askModal">문서 질문</button>
+    <div class="footer-inner">
+        <!-- ✅ 질문 입력과 대상 안내를 묶은 하단 상자를 제공합니다. -->
+        <div class="question-box">
+            <form id="mainQuestionForm" class="question-form"
+                  th:attr="data-ask-all=@{/documents/ask}, data-ask-base=@{/documents/}, data-initial-target=${askTarget != null ? askTarget : 'ALL'}"
+                  method="post">
+                <div class="question-target">
+                    <span id="questionTargetLabel"
+                          th:text="${askTarget == null or askTarget == 'ALL' ? '전체 문서를 대상으로 질문합니다.' : '선택된 문서(UUID): ' + askTarget}">전체 문서를 대상으로 질문합니다.</span>
+                    <!-- ✅ 선택된 문서를 초기화해 전체 범위로 전환하는 버튼입니다. -->
+                    <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="resetQuestionTarget">전체 문서로 전환</button>
+                </div>
+                <div class="d-flex flex-column flex-md-row gap-2">
+                    <!-- ✅ 사용자가 질문을 입력하는 본문 영역입니다. -->
+                    <textarea class="form-control" id="mainQuestionInput" name="question"
+                              placeholder="질문을 입력하세요" required></textarea>
+                    <div class="d-flex flex-md-column gap-2">
+                        <!-- ✅ 질문을 전송하는 메인 실행 버튼입니다. -->
+                        <button type="submit" class="btn btn-primary flex-fill">질문하기</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="action-bar">
+            <button class="btn btn-plus" data-bs-toggle="modal" data-bs-target="#uploadModal">＋ 업로드</button>
+            <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#searchModal">문서 검색 / 목록</button>
+        </div>
     </div>
 </footer>
 
  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
     <script>
-        // ✅ 특정 문서 질문 폼을 제출하기 전에 선택된 UUID에 맞춰 요청 URL을 갱신합니다.
+        // ✅ 문서 선택과 질문 전송 흐름을 제어하는 초기화 스크립트입니다.        
         document.addEventListener('DOMContentLoaded', function () {
             var targetAskForm = document.getElementById('targetAskForm');
             if (!targetAskForm) {
                 return;
             }
-            targetAskForm.addEventListener('submit', function (event) {
-                var selectEl = document.getElementById('targetDocument');
-                if (!selectEl || !selectEl.value) {
-                    event.preventDefault();
+            var askAllUrl = questionForm.dataset.askAll || '';
+            var askBase = questionForm.dataset.askBase || '';
+            if (askBase && !askBase.endsWith('/')) {
+                askBase += '/';
+            }
+
+            var targetLabel = document.getElementById('questionTargetLabel');
+            var resetButton = document.getElementById('resetQuestionTarget');
+            var detailPanel = document.getElementById('documentDetailPanel');
+            var detailContent = document.getElementById('documentDetailContent');
+            var detailPlaceholder = document.getElementById('documentDetailPlaceholder');
+            var detailFileName = document.getElementById('detailFileName');
+            var detailUuid = document.getElementById('detailUuid');
+            var detailUploadedBy = document.getElementById('detailUploadedBy');
+            var detailUploadedAt = document.getElementById('detailUploadedAt');
+            var detailDescription = document.getElementById('detailDescription');
+            var detailSize = document.getElementById('detailSize');
+            var downloadLink = document.getElementById('documentDownloadLink');
+            var deleteForm = document.getElementById('documentDeleteForm');
+            var tableRows = Array.prototype.slice.call(document.querySelectorAll('tr[data-document-row]'));
+            var downloadBase = detailPanel ? detailPanel.dataset.downloadBase : '';
+            var deleteBase = detailPanel ? detailPanel.dataset.deleteBase : '';
+
+            var selectedUuid = '';
+            var selectedName = '';
+
+            // ✅ 질문 대상 상태를 갱신하는 헬퍼 함수입니다.
+            function applyTarget(uuid, name) {
+                selectedUuid = uuid || '';
+                selectedName = name || '';
+                questionForm.dataset.selectedUuid = selectedUuid;
+
+                if (selectedUuid) {
+                    if (targetLabel) {
+                        targetLabel.textContent = '선택된 문서에 질문합니다: ' + (selectedName || ('UUID ' + selectedUuid));
+                    }
+                    if (resetButton) {
+                // ✅ 초기화 버튼을 눌렀을 때 전체 문서 모드로 되돌립니다.
+                        resetButton.classList.remove('d-none');
+                    }
+                } else {
+                    if (targetLabel) {
+                        targetLabel.textContent = '전체 문서를 대상으로 질문합니다.';
+                    }
+                    if (resetButton) {
+                        resetButton.classList.add('d-none');
+                    }
+                }
+            }
+
+            // ✅ 상세 패널을 업데이트하고 필요한 경우 질문 대상을 연결합니다.
+            function renderDetail(row, shouldUpdateTarget) {
+                if (!row || !detailPanel) {            
                     return;
                 }
-                var base = targetAskForm.dataset.actionBase || '/documents/';
-                targetAskForm.action = base + selectEl.value + '/ask';
+                tableRows.forEach(function (item) {
+                    item.classList.remove('document-row-active');
+                });
+                row.classList.add('document-row-active');
+
+                var uuid = row.dataset.documentRow || '';
+                var name = row.dataset.documentName || '';
+                var uploader = row.dataset.documentUploadedBy || '';
+                var uploadedAt = row.dataset.documentUploadedAt || '';
+                var description = row.dataset.documentDescription || '';
+                var size = row.dataset.documentSize || '';
+
+                if (detailPlaceholder && detailContent) {
+                    detailPlaceholder.classList.add('d-none');
+                    detailContent.classList.remove('d-none');
+                }
+                if (detailFileName) {
+                    detailFileName.textContent = name || '-';
+                }
+                if (detailUuid) {
+                    detailUuid.textContent = uuid || '-';
+                }
+                if (detailUploadedBy) {
+                    detailUploadedBy.textContent = uploader || '-';
+                }
+                if (detailUploadedAt) {
+                    detailUploadedAt.textContent = uploadedAt || '-';
+                }
+                if (detailDescription) {
+                    detailDescription.textContent = description || '-';
+                }
+                if (detailSize) {
+                    detailSize.textContent = size ? size + ' bytes' : '-';
+                }
+
+                if (downloadLink && downloadBase && uuid) {
+                    downloadLink.href = downloadBase + uuid;
+                    downloadLink.classList.remove('disabled');
+                    downloadLink.setAttribute('aria-disabled', 'false');
+                }
+
+                if (deleteForm && deleteBase && uuid) {
+                    deleteForm.action = deleteBase + uuid + '/delete';
+                    deleteForm.classList.remove('d-none');
+                }
+
+                if (shouldUpdateTarget) {
+                    applyTarget(uuid, name);
+                }
+            }
+
+            // ✅ 각 행을 클릭했을 때 선택 로직이 실행되도록 이벤트를 연결합니다.
+            tableRows.forEach(function (row) {
+                row.addEventListener('click', function () {
+                    renderDetail(row, true);
+                });
+            });
+
+            // ✅ 초기 진입 시 기존 선택 정보를 반영하거나 기본 상태를 구성합니다.
+            var initialTarget = questionForm.dataset.initialTarget;
+            if (initialTarget && initialTarget !== 'ALL') {
+                var matched = tableRows.find(function (row) {
+                    return row.dataset.documentRow === initialTarget;
+                });
+                if (matched) {
+                    renderDetail(matched, false);
+                    applyTarget(initialTarget, matched.dataset.documentName || initialTarget);
+                } else {
+                    applyTarget(initialTarget, initialTarget);
+                }
+            } else {
+                applyTarget('', '');
+                if (tableRows.length === 1) {
+                    renderDetail(tableRows[0], false);
+                }
+            }
+
+            if (resetButton) {
+                resetButton.addEventListener('click', function () {
+                    applyTarget('', '');
+                    tableRows.forEach(function (row) {
+                        row.classList.remove('document-row-active');
+                    });
+                    if (detailPlaceholder && detailContent) {
+                        detailContent.classList.add('d-none');
+                        detailPlaceholder.classList.remove('d-none');
+                    }
+                    if (downloadLink) {
+                        downloadLink.href = '#';
+                        downloadLink.classList.add('disabled');
+                        downloadLink.setAttribute('aria-disabled', 'true');
+                    }
+                    if (deleteForm) {
+                        deleteForm.action = '';
+                        deleteForm.classList.add('d-none');
+                    }
+                });
+            }
+
+            // ✅ 폼 전송 시 선택 상태에 맞춰 요청 경로를 조정합니다.
+            questionForm.addEventListener('submit', function () {
+                if (selectedUuid) {
+                    questionForm.action = (askBase || '/documents/') + selectedUuid + '/ask';
+                } else {
+                    questionForm.action = askAllUrl || '/documents/ask';
+                }
             });
         });
     </script>
