@@ -1,6 +1,7 @@
 # admin_router.py
-from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Query, Form
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from urllib.parse import quote_plus
 from typing import List, Dict, Any, Optional
 import html
 from collections import Counter
@@ -137,11 +138,76 @@ def view(limit: int = Query(50), offset: int = Query(0, ge=0), with_documents: b
 
 
 # ====== HTML 테이블 페이지 뷰 ======
+@router.post("/delete-by-docid")
+def delete_by_docid(
+    doc_id: str = Form(..., description="삭제할 문서의 docId"),
+    limit: int = Form(50),
+    offset: int = Form(0),
+    with_documents: str = Form("true"),
+):
+    """주어진 docId에 해당하는 모든 청크를 삭제"""
+
+    # docId 입력값을 전처리해 안전하게 사용한다
+    doc_id = (doc_id or "").strip()
+    if not doc_id:
+        # docId가 비어 있으면 아무 작업도 하지 않고 안내 메시지와 함께 돌아간다
+        return RedirectResponse(
+            f"/admin/rag/view-page?limit={limit}&offset={offset}&with_documents={with_documents}&message="
+            f"{quote_plus('docId를 입력해주세요.')}",
+            status_code=303,
+        )
+
+    # 현재 컬렉션에서 해당 docId의 레코드 개수를 조회한다
+    col = get_collection()
+    existing = col.get(where={"docId": doc_id}, include=["metadatas"], limit=100000)
+    to_delete = len(existing.get("ids") or [])
+
+    if to_delete:
+        # 레코드가 존재하면 삭제를 실행한다
+        col.delete(where={"docId": doc_id})
+        message = f"docId '{doc_id}'에 대한 {to_delete}개의 청크를 삭제했습니다."
+    else:
+        # 삭제 대상이 없을 경우에도 안내 메시지를 제공한다
+        message = f"docId '{doc_id}'에 해당하는 청크를 찾지 못했습니다."
+
+    # 원래 페이지 파라미터로 리다이렉트하여 작업 결과를 보여준다
+    return RedirectResponse(
+        f"/admin/rag/view-page?limit={limit}&offset={offset}&with_documents={with_documents}&message={quote_plus(message)}",
+        status_code=303,
+    )
+
+
+@router.post("/wipe-collection")
+def wipe_collection(
+    limit: int = Form(50),
+    offset: int = Form(0),
+    with_documents: str = Form("true"),
+):
+    """현재 선택된 컬렉션을 통째로 삭제"""
+
+    # 최신 컬렉션 정보를 읽어 전체 삭제를 수행한다
+    chroma_dir, collection_name = get_chroma_settings()
+    client = chromadb.PersistentClient(path=chroma_dir)
+
+    try:
+        # 컬렉션 삭제 후에는 get_collection()이 비어 있는 컬렉션을 재생성한다
+        client.delete_collection(collection_name)
+        message = f"컬렉션 '{collection_name}'의 모든 청크를 삭제했습니다."
+    except Exception as exc:
+        # 삭제 실패 시 예외 메시지를 함께 전달한다
+        message = f"컬렉션 삭제 중 오류가 발생했습니다: {exc}"
+
+    return RedirectResponse(
+        f"/admin/rag/view-page?limit={limit}&offset=0&with_documents={with_documents}&message={quote_plus(message)}",
+        status_code=303,
+    )
+
 @router.get("/view-page", response_class=HTMLResponse)
 def view_page(
     limit: int = Query(50, ge=1, le=5000, description="페이지 크기"),
     offset: int = Query(0, ge=0, description="시작 오프셋"),
-    with_documents: bool = Query(True, description="본문 미리보기 포함")
+    with_documents: bool = Query(True, description="본문 미리보기 포함"),
+    message: Optional[str] = Query(None, description="작업 결과 메시지")
 ):
     """
     브라우저에서 표로 확인하는 HTML 페이지
@@ -215,10 +281,15 @@ def view_page(
   .controls {{
     display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin: 8px 0 16px;
   }}
-  .controls a, .controls button {{
+  .controls a, .controls button, .controls input[type=submit] {{
     background: var(--card); border:1px solid var(--border); color: var(--fg);
     padding: 6px 10px; border-radius: 8px; text-decoration:none; cursor:pointer;
   }}
+  .controls form {{ display:flex; gap:6px; align-items:center; }}
+  .controls input[type=text] {{
+    background: var(--bg); border:1px solid var(--border); border-radius:8px;
+    padding:6px 8px; color: var(--fg); min-width:160px;
+  }}  
   .controls a.disabled {{ pointer-events:none; opacity:.4; }}
   table {{
     width: 100%; border-collapse: collapse; background: var(--card); border:1px solid var(--border); border-radius: 10px; overflow: hidden;
@@ -241,6 +312,8 @@ def view_page(
 <body>
   <h1>Chroma Collection: <span class="pill">{html.escape(collection_name)}</span></h1>
 
+  {f'<div class="stats" style="border-color:#f87171; color:#fca5a5;">{html.escape(message)}</div>' if message else ''}
+
   <div class="stats">
     <div><span>Total Chunks</span><strong>{total_chunks}</strong></div>
     <div><span>Unique Docs</span><strong>{unique_docs_total}</strong></div>
@@ -260,6 +333,20 @@ def view_page(
     <a href="/admin/rag/by-doc" target="_blank">By-Doc JSON</a>
     <a href="/admin/rag/stats" target="_blank">Stats JSON</a>
     <a href="/admin/rag/view?limit={limit}&offset={offset}&with_documents={'true' if with_documents else 'false'}" target="_blank">This Page JSON</a>
+    <!-- docId 단위 삭제 폼 -->
+    <form method="post" action="/admin/rag/delete-by-docid" onsubmit="return confirm('입력한 docId의 청크를 모두 삭제할까요?');">
+      <input type="hidden" name="limit" value="{limit}">
+      <input type="hidden" name="offset" value="{offset}">
+      <input type="hidden" name="with_documents" value="{'true' if with_documents else 'false'}">
+      <input type="text" name="doc_id" placeholder="docId 입력" required>
+      <input type="submit" value="선택 docId 삭제">
+    </form>
+    <!-- 전체 삭제 폼 -->
+    <form method="post" action="/admin/rag/wipe-collection" onsubmit="return confirm('현재 컬렉션의 모든 청크를 삭제합니다. 진행할까요?');">
+      <input type="hidden" name="limit" value="{limit}">
+      <input type="hidden" name="with_documents" value="{'true' if with_documents else 'false'}">
+      <input type="submit" value="전체 삭제">
+    </form>    
   </div>
 
   <table>

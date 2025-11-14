@@ -568,14 +568,22 @@ async def upload(
         deletion_filter = {"docId": doc_id} if doc_id else {"source": file.filename}
         deleted_chunks = 0  # 삭제된 청크 수를 추적해 중복 제거 여부를 확인하기 위한 카운터
         try:
-            # 지정된 필터에 해당하는 기존 데이터를 삭제해 재업로드 시 중복을 방지함
-            delete_result = vectordb._collection.delete(where=deletion_filter)
-            if isinstance(delete_result, dict):
-                deleted_chunks = len(delete_result.get("ids") or [])
-            elif isinstance(delete_result, (list, tuple, set)):
-                deleted_chunks = len(delete_result)
-            elif isinstance(delete_result, int):
-                deleted_chunks = delete_result
+            existing = vectordb._collection.get(
+                where=deletion_filter,
+                include=[],
+            )  # 삭제 전에 일치하는 청크가 실제로 존재하는지 확인해 불필요한 delete 호출을 피함
+            existing_ids = existing.get("ids") if isinstance(existing, dict) else None
+            matched_ids = existing_ids or []  # None 대비 기본값으로 빈 리스트를 사용함
+
+            if matched_ids:
+                # 실제로 삭제할 대상이 있을 때에만 delete 를 수행해 헤더 파일 누락 오류를 방지함
+                delete_result = vectordb._collection.delete(where=deletion_filter)
+                if isinstance(delete_result, dict):
+                    deleted_chunks = len(delete_result.get("ids") or [])
+                elif isinstance(delete_result, (list, tuple, set)):
+                    deleted_chunks = len(delete_result)
+                elif isinstance(delete_result, int):
+                    deleted_chunks = delete_result
             logger.info(
                 "업로드 전 기존 청크 삭제 수행 filter=%s, deleted=%s",
                 deletion_filter,
@@ -807,9 +815,15 @@ async def delete_documents(payload: DocDeleteRequest):
             if meta and (meta.get("source") is not None)
         }
 
-        # 동일한 where 조건으로 청크를 삭제한다.
-        collection.delete(where=where)
-        vectordb.persist()  # 변경된 상태를 디스크에 즉시 반영해 일관성을 유지한다.
+        # 동일한 where 조건으로 청크가 존재할 때만 삭제를 수행해 빈 인덱스에서 발생하는 오류를 막는다.
+        if matched_ids:
+            collection.delete(where=where)
+            vectordb.persist()  # 변경된 상태를 디스크에 즉시 반영해 일관성을 유지한다.
+        else:
+            logger.info(
+                "삭제 요청과 일치하는 청크가 없어 delete 작업을 건너뜁니다. filter=%s",
+                where,
+            )  # 삭제할 항목이 없는 경우에도 상황을 기록해 문제 추적을 돕는다.
 
         # 업로드 폴더에 남아있는 원본 파일도 함께 제거한다.
         uploads_dir = (Path(__file__).parent / "uploads").resolve()
