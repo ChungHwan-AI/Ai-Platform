@@ -5,6 +5,10 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 
+/**
+ * 문서 메타데이터와 인덱싱 상태를 함께 보관하는 JPA 엔티티입니다. // ✅ 인덱싱 상태 추적을 위해 엔티티 설명을 보강합니다.
+ */
+
 @Entity
 @Table(name = "documents")
 @Getter
@@ -41,5 +45,12 @@ public class Document {
 
     @Column(name = "description", length = 255)
     private String description;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "indexing_status", nullable = false, length = 20)
+    private DocumentIndexingStatus indexingStatus;   // ✅ 현재 문서가 어떤 인덱싱 단계에 있는지를 기록합니다.
+
+    @Column(name = "indexing_error", length = 1000)
+    private String indexingError;   // ✅ 인덱싱 실패 시 원인을 추적하기 위한 에러 메시지를 저장합니다.    
 }
 

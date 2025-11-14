@@ -59,7 +59,7 @@ public class DocumentController {
                                     schema = @Schema(implementation = DocumentPageResponseDocs.class),
                                     examples = @ExampleObject(
                                             name = "기본 응답",
-                                            value = "{\n  \"success\": true,\n  \"message\": \"문서 목록 조회 성공\",\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": 1,\n        \"uuid\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"fileName\": \"report.pdf\",\n        \"uploadedBy\": \"alice\",\n        \"uploadedAt\": \"2025-02-01T10:15:30\",\n        \"size\": 1024,\n        \"description\": \"월간 보고서\"\n      }\n    ],\n    \"page\": 0,\n    \"size\": 10,\n    \"totalElements\": 1,\n    \"totalPages\": 1,\n    \"first\": true,\n    \"last\": true,\n    \"hasNext\": false,\n    \"hasPrev\": false,\n    \"sort\": {\n      \"orders\": [\n        {\n          \"property\": \"uploadedAt\",\n          \"direction\": \"DESC\"\n        }\n      ]\n    }\n  }\n}"
+                                            value = "{\n  \"success\": true,\n  \"message\": \"문서 목록 조회 성공\",\n  \"data\": {\n    \"content\": [\n      {\n        \"id\": 1,\n        \"uuid\": \"550e8400-e29b-41d4-a716-446655440000\",\n        \"fileName\": \"report.pdf\",\n        \"uploadedBy\": \"alice\",\n        \"uploadedAt\": \"2025-02-01T10:15:30\",\n        \"size\": 1024,\n        \"description\": \"월간 보고서\",\n        \"indexingStatus\": \"SUCCEEDED\",\n        \"indexingError\": null\n      }\n    ],\n    \"page\": 0,\n    \"size\": 10,\n    \"totalElements\": 1,\n    \"totalPages\": 1,\n    \"first\": true,\n    \"last\": true,\n    \"hasNext\": false,\n    \"hasPrev\": false,\n    \"sort\": {\n      \"orders\": [\n        {\n          \"property\": \"uploadedAt\",\n          \"direction\": \"DESC\"\n        }\n      ]\n    }\n  }\n}"
                                     )
                             )
                     )
@@ -112,6 +112,12 @@ public class DocumentController {
         return documentService.ask(null, question);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
     }
     
+    @Operation(summary = "문서 인덱싱 재시도", description = "저장된 파일을 이용해 RAG 인덱싱을 다시 요청합니다.")
+    @PostMapping("/{uuid}/reindex")
+    public ApiResponseDto<Map<String, Object>> reindexDocument(@PathVariable String uuid) {
+        return documentService.reindexDocument(uuid);  // ✅ 서비스에서 인덱싱 상태 갱신 및 재전송을 처리하도록 위임합니다.
+    }
+        
     @Operation(summary = "문서 삭제", description = "UUID를 기준으로 스토리지 및 RAG 인덱스에서 문서를 삭제합니다.")
     @DeleteMapping("/{uuid}")
     public ApiResponseDto<Map<String, Object>> deleteDocument(@PathVariable String uuid) {

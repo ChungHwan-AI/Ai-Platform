@@ -41,5 +41,10 @@ public interface DocumentService {
     /**
      * 스토리지와 인덱스, DB에서 문서를 삭제합니다. // ✅ 삭제 기능의 의미를 설명합니다.
      */
-    ApiResponseDto<Map<String, Object>> deleteDocument(String uuid);     
+    ApiResponseDto<Map<String, Object>> deleteDocument(String uuid);
+
+    /**
+     * 저장된 문서를 다시 RAG 백엔드로 전송해 인덱싱을 재시도합니다. // ✅ 업로드 실패 사례에 대응하기 위한 재처리 기능을 정의합니다.
+     */
+    ApiResponseDto<Map<String, Object>> reindexDocument(String uuid);  
 }

@@ -1,5 +1,6 @@
 package com.buhmwoo.oneask.modules.document.api.dto;
 
+import com.buhmwoo.oneask.modules.document.domain.DocumentIndexingStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -37,4 +38,10 @@ public class DocumentListItemResponseDto {
 
     @Schema(description = "파일 설명", example = "월간 보고서")
     private String description;   // ✅ 설명 필드
+
+    @Schema(description = "RAG 인덱싱 상태", example = "SUCCEEDED")
+    private DocumentIndexingStatus indexingStatus;   // ✅ 현재 인덱싱 진행 상황을 프런트로 전달합니다.
+
+    @Schema(description = "최근 인덱싱 오류 메시지", example = "Connection timed out")
+    private String indexingError;   // ✅ 실패 원인을 UI에서 확인할 수 있도록 노출합니다.    
 }

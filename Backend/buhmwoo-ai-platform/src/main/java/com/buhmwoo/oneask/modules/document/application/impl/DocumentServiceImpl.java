@@ -15,6 +15,7 @@ import com.buhmwoo.oneask.modules.document.application.question.GptRequest; // �
 import com.buhmwoo.oneask.modules.document.application.question.GptResponse; // ✅ GPT 응답 DTO를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.QuestionAnswerCache; // ✅ 질문 응답 캐시 컴포넌트를 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.domain.Document;
+import com.buhmwoo.oneask.modules.document.domain.DocumentIndexingStatus;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
 import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -136,6 +137,8 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .uploadedBy(uploadedBy)
                     .uploadedAt(LocalDateTime.now())
                     .description(description)
+                    .indexingStatus(DocumentIndexingStatus.PENDING)   // ✅ 업로드 직후 인덱싱을 아직 수행하지 않았음을 표시합니다.
+                    .indexingError(null)   // ✅ 최초 업로드 시에는 에러 메시지가 없도록 초기화합니다.                    
                     .build();
             documentRepository.save(doc);
 
@@ -146,33 +149,14 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
             // 6) RAG 인덱싱 (ragBase 없으면 생략)
             if (!ragBase.isBlank()) {
-                String url = ragBase + "/upload"; // 예: http://rag-backend:8000/upload (컨테이너 네트워크)
-                try {
-                    MultipartBodyBuilder mb = new MultipartBodyBuilder();
-                    mb.part("file", new FileSystemResource(target.toFile()))
-                      .filename(safeName)
-                      .contentType(MediaType.APPLICATION_OCTET_STREAM);
-                    mb.part("docId", uuid)
-                      .contentType(MediaType.TEXT_PLAIN);
-
-                    ragWebClient.post()
-                        .uri(url)
-                        .contentType(MediaType.MULTIPART_FORM_DATA)
-                        .bodyValue(mb.build())
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .doOnNext(b -> log.info("[RAG] status=200 body={}", b))
-                        .block(Duration.ofSeconds(120)); // ← 변수에 할당 안 함
-
-                    return buildPreviewResponse(uuid, safeName, preview,
-                            "파일 업로드 + 인덱싱 요청 완료: " + safeName);
-                } catch (Exception ex) {
-                    log.warn("[RAG] : {}", ex.toString(), ex);
-                    return buildPreviewResponse(uuid, safeName, preview,
-                            "파일 업로드 완료(인덱싱 요청 실패): " + safeName);
-                }
+                return requestIndexing(doc, target, safeName, preview, ragBase,
+                        "파일 업로드 + 인덱싱 요청 완료: " + safeName,
+                        "파일 업로드 완료(인덱싱 요청 실패): " + safeName);                
             } else {
-                return buildPreviewResponse(uuid, safeName, preview,
+                doc.setIndexingStatus(DocumentIndexingStatus.SKIPPED);   // ✅ RAG 백엔드가 비활성화된 경우 상태를 명확히 기록합니다.
+                doc.setIndexingError(null);   // ✅ 인덱싱을 수행하지 않았으므로 오류 메시지를 초기화합니다.
+                documentRepository.save(doc);   // ✅ 상태 변경 내용을 즉시 반영합니다.
+                return buildPreviewResponse(doc, preview,
                         "파일 업로드 완료(인덱싱 비활성)");
             }
 
@@ -300,6 +284,53 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         return sanitizedQuestion; // ✅ 출처가 없으면 질문 자체를 제목으로 사용합니다.
     }
 
+    /** 문서 인덱싱 재시도: 저장된 파일을 이용해 재업로드한다. */
+    @Override
+    public ApiResponseDto<Map<String, Object>> reindexDocument(String uuid) {
+        if (uuid == null || uuid.isBlank()) {
+            return ApiResponseDto.fail("재인덱싱 실패: UUID가 비어 있습니다.");   // ✅ 기본 파라미터 검증으로 조기 실패를 반환합니다.
+        }
+
+        Optional<Document> optionalDocument = documentRepository.findByUuid(uuid);
+        if (optionalDocument.isEmpty()) {
+            return ApiResponseDto.fail("재인덱싱 실패: 해당 UUID의 문서를 찾을 수 없습니다.");   // ✅ 존재하지 않는 문서에 대한 요청을 방어합니다.
+        }
+
+        Document document = optionalDocument.get();
+        String ragBase = Optional.ofNullable(props.getRag()).map(OneAskProperties.Rag::getBackendUrl).orElse("");
+        if (ragBase.isBlank()) {
+            log.warn("[RAG] 재인덱싱 요청 불가 uuid={} : backend-url 미설정", uuid);   // ✅ 운영 환경에서 설정 문제를 추적할 수 있도록 로그를 남깁니다.
+            return ApiResponseDto.fail("재인덱싱 실패: RAG 백엔드 URL이 설정되어 있지 않습니다.");
+        }
+
+        Path filePath;
+        try {
+            filePath = Paths.get(document.getFilePath());   // ✅ 저장된 경로 정보를 기반으로 실제 파일을 찾습니다.
+        } catch (InvalidPathException ex) {
+            document.setIndexingStatus(DocumentIndexingStatus.FAILED);   // ✅ 경로 해석 자체가 실패했음을 상태로 남깁니다.
+            document.setIndexingError(truncateErrorMessage(ex.getMessage()));   // ✅ 상세 오류를 저장해 원인 분석에 활용합니다.
+            documentRepository.save(document);
+            return ApiResponseDto.fail("재인덱싱 실패: 저장된 파일 경로가 올바르지 않습니다.");
+        }
+
+        if (!Files.exists(filePath)) {
+            document.setIndexingStatus(DocumentIndexingStatus.FAILED);   // ✅ 파일 부재로 인한 실패 상태를 기록합니다.
+            document.setIndexingError("저장된 파일을 찾을 수 없어 재인덱싱에 실패했습니다.");   // ✅ 운영자가 즉시 원인을 파악하도록 메시지를 남깁니다.
+            documentRepository.save(document);
+            return ApiResponseDto.fail("재인덱싱 실패: 저장된 파일을 찾을 수 없습니다.");
+        }
+
+        return requestIndexing(
+                document,
+                filePath,
+                document.getFileName(),
+                null,
+                ragBase,
+                "문서 재인덱싱 요청 완료: " + document.getFileName(),
+                "문서 재인덱싱 요청 실패: " + document.getFileName()
+        );
+    }
+    
     /** 문서 삭제: 스토리지/DB/RAG 인덱스에서 모두 정리한다. */
     @Override // ✅ 삭제 로직이 인터페이스 정의와 연결됨을 표시합니다.
     public ApiResponseDto<Map<String, Object>> deleteDocument(String uuid) {
@@ -359,6 +390,63 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         return ApiResponseDto.ok(result, "문서 삭제 완료");
     }
 
+    /**
+     * 저장된 파일을 RAG 백엔드로 전송하면서 인덱싱 상태를 갱신합니다. // ✅ 업로드와 재처리 모두에서 재사용하기 위한 공통 로직입니다.
+     */
+    private ApiResponseDto<Map<String, Object>> requestIndexing(
+            Document document,
+            Path filePath,
+            String originalFileName,
+            String preview,
+            String ragBaseUrl,
+            String successMessage,
+            String failureMessage
+    ) {
+        document.setIndexingStatus(DocumentIndexingStatus.PROCESSING);   // ✅ 인덱싱 요청이 진행 중임을 표시합니다.
+        document.setIndexingError(null);   // ✅ 이전 오류 메시지를 초기화합니다.
+        documentRepository.save(document);   // ✅ 상태 변화를 DB에 즉시 반영합니다.
+
+        String url = ragBaseUrl + "/upload";   // ✅ RAG 업로드 엔드포인트를 구성합니다.
+        try {
+            MultipartBodyBuilder builder = new MultipartBodyBuilder();
+            builder.part("file", new FileSystemResource(filePath.toFile()))
+                    .filename(originalFileName)
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM);   // ✅ 바이너리 전송을 명시합니다.
+            builder.part("docId", document.getUuid())
+                    .contentType(MediaType.TEXT_PLAIN);   // ✅ 백엔드가 UUID를 식별자로 사용할 수 있도록 전달합니다.
+
+            ragWebClient.post()
+                    .uri(url)
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .bodyValue(builder.build())
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .doOnNext(body -> log.info("[RAG] indexing response uuid={} body={}", document.getUuid(), body))
+                    .block(Duration.ofSeconds(120));   // ✅ RAG 응답을 기다리는 최대 시간을 제한합니다.
+
+            document.setIndexingStatus(DocumentIndexingStatus.SUCCEEDED);   // ✅ 성공적으로 인덱싱되었음을 기록합니다.
+            document.setIndexingError(null);   // ✅ 오류 메시지를 비웁니다.
+            documentRepository.save(document);   // ✅ 결과를 지속화합니다.
+            return buildPreviewResponse(document, preview, successMessage);
+        } catch (Exception ex) {
+            log.warn("[RAG] indexing failed uuid={} err={}", document.getUuid(), ex.toString(), ex);   // ✅ 장애 상황을 로그로 남깁니다.
+            document.setIndexingStatus(DocumentIndexingStatus.FAILED);   // ✅ 실패 상태를 기록합니다.
+            document.setIndexingError(truncateErrorMessage(ex.getMessage()));   // ✅ 긴 오류 메시지를 잘라 저장합니다.
+            documentRepository.save(document);   // ✅ 실패 원인을 DB에 남깁니다.
+            return buildPreviewResponse(document, preview, failureMessage);
+        }
+    }
+
+    /**
+     * 인덱싱 오류 메시지를 컬럼 길이(1000자)에 맞게 절단합니다. // ✅ DB 제약 조건 위반을 방지하기 위한 보조 메서드입니다.
+     */
+    private String truncateErrorMessage(String errorMessage) {
+        if (errorMessage == null) {
+            return null;   // ✅ 오류 메시지가 없을 때는 그대로 null 을 유지합니다.
+        }
+        return errorMessage.length() > 1000 ? errorMessage.substring(0, 1000) : errorMessage;   // ✅ 최대 길이를 초과하면 잘라냅니다.
+    }
+
     /** 프리뷰용 텍스트 추출 (PDF / PPTX / DOCX) */
     private String extractText(org.springframework.web.multipart.MultipartFile file) {
         String name = file.getOriginalFilename();
@@ -395,12 +483,14 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     }
 
     private ApiResponseDto<Map<String, Object>> buildPreviewResponse(
-            String uuid, String fileName, String preview, String message
+            Document document, String preview, String message
     ) {
         Map<String, Object> response = new HashMap<>();
-        response.put("uuid", uuid);
-        response.put("fileName", fileName);
-        response.put("previewText", preview);
+        response.put("uuid", document.getUuid());   // ✅ 프런트에서 문서를 식별할 수 있도록 UUID를 내려줍니다.
+        response.put("fileName", document.getFileName());   // ✅ 업로드된 파일명을 그대로 전달합니다.
+        response.put("previewText", preview);   // ✅ 텍스트 추출 결과를 함께 제공해 업로드 직후 확인이 가능합니다.
+        response.put("indexingStatus", document.getIndexingStatus());   // ✅ 최신 인덱싱 상태를 즉시 확인할 수 있도록 포함합니다.
+        response.put("indexingError", document.getIndexingError());   // ✅ 실패 시 원인을 UI에서 확인할 수 있게 합니다.
         return ApiResponseDto.ok(response, message);
     }
 
@@ -416,6 +506,8 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 .uploadedAt(document.getUploadedAt())   // ✅ 업로드 시간 매핑
                 .size(document.getSize())   // ✅ 파일 크기 매핑
                 .description(document.getDescription())   // ✅ 설명 매핑
+                .indexingStatus(document.getIndexingStatus())   // ✅ 인덱싱 상태를 그대로 노출합니다.
+                .indexingError(document.getIndexingError())   // ✅ 실패 시 남겨진 오류 메시지를 전달합니다.                
                 .build();
     }    
 }
