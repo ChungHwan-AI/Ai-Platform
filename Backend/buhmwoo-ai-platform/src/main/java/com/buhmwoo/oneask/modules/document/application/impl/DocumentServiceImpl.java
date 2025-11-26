@@ -7,6 +7,7 @@ import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ 통일된 질문 응답 포맷을 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerSourceDto; // ✅ 검색된 출처 정보를 DTO로 변환하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+import com.buhmwoo.oneask.modules.document.application.question.BotMode; // ✅ fallback 정책을 전환하기 위해 봇 모드를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.DocumentRetrievalRequest; // ✅ 검색 단계 호출을 위해 요청 DTO를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.DocumentRetrievalResult; // ✅ 검색 결과 DTO를 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.DocumentRetriever; // ✅ 검색 모듈 인터페이스를 주입받기 위해 임포트합니다.
@@ -14,6 +15,7 @@ import com.buhmwoo.oneask.modules.document.application.question.GptClient; // �
 import com.buhmwoo.oneask.modules.document.application.question.GptRequest; // ✅ GPT 요청 DTO를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.GptResponse; // ✅ GPT 응답 DTO를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.QuestionAnswerCache; // ✅ 질문 응답 캐시 컴포넌트를 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.RetrievedDocumentChunk; // ✅ 검색 결과에서 점수를 추출하기 위해 청크 모델을 임포트합니다.
 import com.buhmwoo.oneask.modules.document.domain.Document;
 import com.buhmwoo.oneask.modules.document.domain.DocumentIndexingStatus;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
@@ -68,6 +70,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     private final QuestionAnswerCache questionAnswerCache; // ✅ 반복 질문에 대한 캐시를 제공합니다.
 
     private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
+    private static final double DEFAULT_SCORE_THRESHOLD = 0.35; // ✅ 검색 신뢰도가 낮을 때 fallback 으로 전환하기 위한 임계값입니다.
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
     @Override // ✅ 인터페이스 계약을 충실히 따르고 있음을 표시합니다.
@@ -221,14 +224,14 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
     /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
     @Override // ✅ 질의 처리 로직이 인터페이스 계약을 따른다는 것을 나타냅니다.
-    public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question) {
+    public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode) {
         if (!StringUtils.hasText(question)) {
             return ApiResponseDto.fail("질의 실패: 질문이 비어 있습니다."); // ✅ 필수 파라미터 누락을 즉시 안내합니다.
         }
 
         String docId = StringUtils.hasText(uuid) ? uuid : null; // ✅ 문서 ID가 비어 있으면 전체 검색으로 전환합니다.
         try {
-            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, question); // ✅ 동일 질의에 대한 캐시를 확인합니다.
+            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, question, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
             if (cached.isPresent()) {
                 return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
             }
@@ -236,30 +239,21 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
             DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
 
-            GptRequest gptRequest = new GptRequest(question, retrievalResult.context()); // ✅ 검색 결과 컨텍스트와 질문을 묶어 LLM 호출 파라미터로 준비합니다.
-            GptResponse gptResponse = gptClient.generate(gptRequest); // ✅ GPT 모듈을 통해 최종 답변 생성을 요청합니다.
+            Double maxScore = retrievalResult.matches().stream()
+                    .map(this::extractScore) // ✅ 검색 결과의 유사도 점수를 추출합니다.
+                    .filter(Objects::nonNull)
+                    .max(Double::compareTo)
+                    .orElse(null); // ✅ 점수가 없으면 null 로 처리해 fallback 분기에 전달합니다.
 
-            if (gptResponse.answer() == null || gptResponse.answer().isBlank()) {
-                return ApiResponseDto.fail("질의 실패: GPT 응답이 비어 있습니다."); // ✅ 의미 있는 답변이 없는 경우 실패로 간주합니다.            
+            if (maxScore != null && maxScore >= DEFAULT_SCORE_THRESHOLD) { // ✅ 임계값 이상이면 기존 RAG 흐름을 그대로 사용합니다.
+                QuestionAnswerResponseDto ragAnswer = buildRagAnswer(question, retrievalResult); // ✅ 정상 RAG 응답을 생성합니다.
+                questionAnswerCache.put(docId, question, mode, ragAnswer); // ✅ 동일 질의/모드 재호출을 위한 캐시를 저장합니다.
+                return ApiResponseDto.ok(ragAnswer, "응답 성공");        
             }
-            List<QuestionAnswerSourceDto> sources = retrievalResult.matches().stream()
-                    .map(match -> QuestionAnswerSourceDto.builder()
-                            .reference(match.reference())
-                            .source(match.source())
-                            .page(match.page())
-                            .preview(match.preview())
-                            .build())
-                    .toList(); // ✅ 검색된 청크를 앱에서 활용할 수 있는 출처 DTO 목록으로 변환합니다.
-
-            QuestionAnswerResponseDto payload = QuestionAnswerResponseDto.builder()
-                    .title(buildAnswerTitle(question, sources))
-                    .answer(gptResponse.answer())
-                    .sources(sources)
-                    .fromCache(false)
-                    .build(); // ✅ 앱에 필요한 응답 본문과 출처 정보를 모두 포함합니다.
-
-            questionAnswerCache.put(docId, question, payload); // ✅ 후속 질의에 대비해 캐시에 저장합니다.
-            return ApiResponseDto.ok(payload, "응답 성공");
+            
+            QuestionAnswerResponseDto fallback = buildFallbackAnswer(question, mode); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
+            questionAnswerCache.put(docId, question, mode, fallback); // ✅ fallback 결과도 캐싱해 동일 질의 반복 호출을 줄입니다.
+            return ApiResponseDto.ok(fallback, "응답 성공(fallback)");
 
         } catch (Exception e) {
             log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
@@ -267,6 +261,94 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         }
     }
 
+    private QuestionAnswerResponseDto buildRagAnswer(String question, DocumentRetrievalResult retrievalResult) {
+        GptRequest gptRequest = new GptRequest(question, retrievalResult.context()); // ✅ 검색 결과 컨텍스트와 질문을 묶어 LLM 호출 파라미터로 준비합니다.
+        GptResponse gptResponse = gptClient.generate(gptRequest); // ✅ GPT 모듈을 통해 최종 답변 생성을 요청합니다.
+
+        if (gptResponse.answer() == null || gptResponse.answer().isBlank()) {
+            throw new IllegalStateException("질의 실패: GPT 응답이 비어 있습니다."); // ✅ 의미 있는 답변이 없는 경우 실패로 간주합니다.
+        }
+        List<QuestionAnswerSourceDto> sources = retrievalResult.matches().stream()
+                .map(match -> QuestionAnswerSourceDto.builder()
+                        .reference(match.reference())
+                        .source(match.source())
+                        .page(match.page())
+                        .preview(match.preview())
+                        .build())
+                .toList(); // ✅ 검색된 청크를 앱에서 활용할 수 있는 출처 DTO 목록으로 변환합니다.
+
+        QuestionAnswerResponseDto payload = QuestionAnswerResponseDto.builder()
+                .title(buildAnswerTitle(question, sources))
+                .answer(gptResponse.answer())
+                .sources(sources)
+                .fromCache(false)
+                .build(); // ✅ 앱에 필요한 응답 본문과 출처 정보를 모두 포함합니다.
+
+        return payload;
+    }
+
+    private QuestionAnswerResponseDto buildFallbackAnswer(String question, BotMode mode) {
+        if (mode == BotMode.STRICT) { // ✅ STRICT 모드에서는 문서가 없음을 알리고 종료합니다.
+            return QuestionAnswerResponseDto.builder()
+                    .title(buildAnswerTitle(question, List.of()))
+                    .answer("현재 업로드된 문서/DB에서는 이 질문과 관련된 정보를 찾지 못했습니다.\n문서나 데이터가 등록된 후 다시 문의해 주세요.")
+                    .sources(List.of())
+                    .fromCache(false)
+                    .build();
+        }
+
+        String generalAnswer = generateGeneralKnowledgeAnswer(question); // ✅ HYBRID 모드에서 일반 지식 기반 답변을 준비합니다.
+        String hybridMessage = "[문서/DB 검색 결과]\n" +
+                "- 현재 보유한 문서/DB에서는 관련 정보를 찾지 못했습니다.\n\n" +
+                "[일반적인 지식 기준 답변]\n" +
+                generalAnswer + "\n\n" +
+                "※ 위 내용은 일반적인 관점에서의 설명이며, 우리 회사의 실제 정책/규정과 다를 수 있습니다. 중요한 사항은 담당자에게 한 번 더 확인해 주세요.";
+
+        return QuestionAnswerResponseDto.builder()
+                .title(buildAnswerTitle(question, List.of()))
+                .answer(hybridMessage)
+                .sources(List.of())
+                .fromCache(false)
+                .build();
+    }
+
+    private Double extractScore(RetrievedDocumentChunk chunk) {
+        Map<String, Object> metadata = chunk.metadata(); // ✅ 검색 결과 메타데이터에서 점수를 찾아봅니다.
+        if (metadata == null) {
+            return null; // ✅ 점수가 없으면 null 로 반환해 fallback 판단에서 제외합니다.
+        }
+
+        Object scoreRaw = metadata.get("score"); // ✅ RAG 백엔드가 score 를 직접 내려줄 때 사용합니다.
+        if (scoreRaw instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (scoreRaw instanceof String scoreText) {
+            try {
+                return Double.parseDouble(scoreText); // ✅ 문자열로 온 점수는 안전하게 변환합니다.
+            } catch (NumberFormatException ignored) {
+                // ✅ 변환 실패 시 다른 메타데이터를 확인합니다.
+            }
+        }
+
+        Object distanceRaw = metadata.get("distance"); // ✅ 거리 기반 응답일 경우 score 로 역변환합니다.
+        if (distanceRaw instanceof Number number) {
+            double distance = number.doubleValue();
+            return 1.0 / (1.0 + distance); // ✅ 0~1 범위의 근사 점수로 변환합니다.
+        }
+        return null; // ✅ 점수를 계산할 수 없는 경우 null 로 처리합니다.
+    }
+
+    private String generateGeneralKnowledgeAnswer(String question) {
+        String fallbackContext = "(문서/DB 검색 결과 없음) 일반적인 상식과 업계 지식을 바탕으로 질문에 답변해 주세요. " +
+                "회사 내부 정책이라고 단정하지 말고 '일반적으로'라는 표현을 사용해 주세요."; // ✅ 일반 지식 기반 답변임을 LLM에 명확히 전달하는 컨텍스트입니다.
+
+        GptResponse response = gptClient.generate(new GptRequest(question, fallbackContext)); // ✅ 동일한 GPT 클라이언트를 활용해 간단한 일반 지식 답변을 생성합니다.
+        if (response.answer() == null || response.answer().isBlank()) {
+            return "일반 지식 기반 답변을 생성하지 못했습니다."; // ✅ 예외 상황에서 사용자에게 안전한 문구를 제공합니다.
+        }
+        return response.answer();
+    }
+    
     /**
      * 질문 내용과 대표 출처를 활용해 앱 카드 상단에 노출할 제목을 생성합니다. // ✅ 응답 가독성을 높이기 위한 헬퍼 메서드임을 설명합니다.
      */

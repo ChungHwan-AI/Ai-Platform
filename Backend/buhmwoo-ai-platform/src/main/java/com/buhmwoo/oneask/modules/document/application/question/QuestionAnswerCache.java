@@ -31,8 +31,8 @@ public class QuestionAnswerCache {
     /**
      * 캐시에 저장된 응답을 조회합니다. // ✅ TTL을 초과한 경우 즉시 무효화합니다.
      */
-    public synchronized Optional<QuestionAnswerResponseDto> get(String docId, String question) {
-        String key = buildKey(docId, question); // ✅ 문서-질문 조합으로 고유 키를 생성합니다.
+    public synchronized Optional<QuestionAnswerResponseDto> get(String docId, String question, BotMode mode) {
+        String key = buildKey(docId, question, mode); // ✅ 모드까지 포함해 캐시 키를 구성해 혼선을 방지합니다.
         CacheEntry entry = cache.get(key);
         if (entry == null) {
             return Optional.empty(); // ✅ 캐시에 없는 경우 빈 Optional을 반환합니다.
@@ -52,8 +52,8 @@ public class QuestionAnswerCache {
     /**
      * 새로운 응답을 캐시에 저장합니다. // ✅ 동일 키에 대한 이전 응답은 덮어씁니다.
      */
-    public synchronized void put(String docId, String question, QuestionAnswerResponseDto response) {
-        String key = buildKey(docId, question); // ✅ 일관된 키 생성 로직을 재사용합니다.
+    public synchronized void put(String docId, String question, BotMode mode, QuestionAnswerResponseDto response) {
+        String key = buildKey(docId, question, mode); // ✅ 모드가 다른 응답을 별도로 보관합니다.
         QuestionAnswerResponseDto stored = response.toBuilder()
                 .sources(copySources(response.getSources()))
                 .fromCache(false)
@@ -61,8 +61,8 @@ public class QuestionAnswerCache {
         cache.put(key, new CacheEntry(stored, Instant.now().plus(TTL))); // ✅ 응답과 만료 시각을 함께 저장합니다.
     }
 
-    private String buildKey(String docId, String question) {
-        return (docId == null ? "ALL" : docId) + "::" + question.trim(); // ✅ null 문서 ID도 구분 가능하도록 별도 토큰을 사용합니다.
+    private String buildKey(String docId, String question, BotMode mode) {
+        return (docId == null ? "ALL" : docId) + "::" + mode.name() + "::" + question.trim(); // ✅ 봇 모드까지 키에 포함해 캐시 충돌을 막습니다.
     }
 
     private List<QuestionAnswerSourceDto> copySources(List<QuestionAnswerSourceDto> sources) {

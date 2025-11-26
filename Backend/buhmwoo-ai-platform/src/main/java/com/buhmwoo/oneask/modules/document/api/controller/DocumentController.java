@@ -6,6 +6,7 @@ import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ GPT 응답 포맷을 재사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+import com.buhmwoo.oneask.modules.document.application.question.BotMode; // ✅ fallback 모드 선택을 위해 Enum 을 컨트롤러에 노출합니다.
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -101,15 +102,18 @@ public class DocumentController {
     @Operation(summary = "문서 기반 질문", description = "업로드된 문서(UUID) 범위에서 질문에 답합니다.")
 
     @GetMapping("/{uuid}/ask")
-    public ApiResponseDto<QuestionAnswerResponseDto> ask(@PathVariable String uuid, @RequestParam String question) {
-        return documentService.ask(uuid, question);
+    public ApiResponseDto<QuestionAnswerResponseDto> ask(@PathVariable String uuid,
+                                                         @RequestParam String question,
+                                                         @RequestParam(name = "mode", required = false, defaultValue = "STRICT") BotMode mode) {
+        return documentService.ask(uuid, question, mode);
     }
 
     @Operation(summary = "문서 전체 질문", description = "특정 문서를 지정하지 않고 업로드된 모든 문서를 대상으로 질문에 답합니다.")
 
     @GetMapping("/ask")
-    public ApiResponseDto<QuestionAnswerResponseDto> askAll(@RequestParam String question) {
-        return documentService.ask(null, question);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
+    public ApiResponseDto<QuestionAnswerResponseDto> askAll(@RequestParam String question,
+                                                            @RequestParam(name = "mode", required = false, defaultValue = "STRICT") BotMode mode) {
+        return documentService.ask(null, question, mode);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
     }
     
     @Operation(summary = "문서 인덱싱 재시도", description = "저장된 파일을 이용해 RAG 인덱싱을 다시 요청합니다.")

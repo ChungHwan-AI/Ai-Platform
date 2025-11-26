@@ -4,6 +4,7 @@ import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ 질문 응답 포맷을 표준화한 DTO를 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.BotMode; // ✅ 봇 동작 모드를 전달해 fallback 정책을 제어하기 위해 임포트합니다.
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
@@ -36,8 +37,15 @@ public interface DocumentService {
     /**
      * 특정 문서 또는 전체 문서를 대상으로 RAG 질의를 수행합니다. // ✅ 질문 처리 기능을 설명합니다.
      */
-    ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question);
+    ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode);
 
+    /**
+     * 기존 호출부 호환을 위해 기본 STRICT 모드로 질의를 수행합니다. // ✅ 모드 파라미터를 생략하더라도 이전 API가 그대로 동작함을 보장합니다.
+     */
+    default ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question) {
+        return ask(uuid, question, BotMode.STRICT);
+    }
+        
     /**
      * 스토리지와 인덱스, DB에서 문서를 삭제합니다. // ✅ 삭제 기능의 의미를 설명합니다.
      */
