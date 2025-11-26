@@ -2,9 +2,10 @@ package com.buhmwoo.oneask.modules.document.ui;
 
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
-import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto; 
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ 뷰에서 GPT 응답 구조를 재활용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
+import com.buhmwoo.oneask.modules.document.application.question.BotMode; // ✅ 질문 모드를 받아 하이브리드/엄격 모드를 전환하기 위해 임포트합니다.
 import org.slf4j.Logger; // ✅ 오류 상황을 기록하기 위해 SLF4J 로거를 가져옵니다.
 import org.slf4j.LoggerFactory; // ✅ 현재 클래스용 로거 인스턴스를 생성하기 위해 사용합니다.
 import org.springframework.data.domain.PageRequest;
@@ -87,6 +88,9 @@ public class DocumentViewController {
         model.addAttribute("searchParams", buildSearchParams(fileName, uploadedBy, uploadedFrom, uploadedTo)); // ✅ 검색 값이 유지되도록 파라미터를 모델에 전달합니다.
         model.addAttribute("pageNumbers", buildPageNumbers(pageResponse.getTotalPages())); // ✅ 페이지 네비게이션 렌더링을 위한 번호 목록을 제공합니다.
         model.addAttribute("searchTriggered", searchTriggered); // ✅ 프런트에서 모달 오픈 여부를 판단할 수 있도록 상태 값을 추가합니다.
+        if (!model.containsAttribute("askMode")) { // ✅ 화면 최초 진입 시 기본 모드를 STRICT 로 세팅해 라디오 버튼이 초기화되도록 합니다.
+            model.addAttribute("askMode", BotMode.STRICT.name());
+        }        
         return "documents"; // ✅ documents.html 템플릿을 렌더링하도록 반환합니다.
     }
 
@@ -125,26 +129,30 @@ public class DocumentViewController {
     public String askDocument(
             @PathVariable("uuid") String uuid, // ✅ 질문 대상 문서 UUID를 경로 변수로 받습니다.
             @RequestParam("question") String question, // ✅ 질의 내용 텍스트를 요청 파라미터로 받습니다.
+            @RequestParam(value = "mode", defaultValue = "STRICT") BotMode mode, // ✅ 하이브리드/엄격 동작 방식을 함께 전달합니다.
             RedirectAttributes redirectAttributes // ✅ 질문 결과를 리다이렉트 이후에도 표시합니다.
     ) {
-        ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(uuid, question); // ✅ 검색-생성 파이프라인을 실행해 응답을 받아옵니다.
+        ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(uuid, question, mode); // ✅ 검색-생성 파이프라인을 선택한 모드에 맞춰 실행합니다.
         redirectAttributes.addFlashAttribute("alertMessage", response.getMessage()); // ✅ 질의 처리 메시지를 플래시로 보냅니다.
         redirectAttributes.addFlashAttribute("alertType", response.isSuccess() ? "info" : "danger"); // ✅ 질의 결과는 정보성 알림으로 표현합니다.
         redirectAttributes.addFlashAttribute("askResult", response.getData()); // ✅ 구조화된 응답 DTO를 뷰에서 활용할 수 있도록 전달합니다.
         redirectAttributes.addFlashAttribute("askTarget", uuid); // ✅ 어느 문서에 대한 질문인지 식별해 템플릿에서 강조합니다.
+        redirectAttributes.addFlashAttribute("askMode", mode.name()); // ✅ 사용자가 선택한 모드가 화면에 다시 반영되도록 전달합니다.
         return "redirect:/documents"; // ✅ 결과 확인을 위해 목록 화면으로 리다이렉트합니다.
     }
 
     @PostMapping("/ask") // ✅ 전체 문서를 대상으로 하는 자유 질의 핸들러입니다.
     public String askAll(
             @RequestParam("question") String question, // ✅ 전체 질의 텍스트를 전달받습니다.
+            @RequestParam(value = "mode", defaultValue = "STRICT") BotMode mode, // ✅ 전체 질문에서도 모드 전환을 지원합니다.
             RedirectAttributes redirectAttributes // ✅ 응답 메시지를 유지하기 위해 플래시 속성을 사용합니다.
     ) {
-        ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(null, question); // ✅ 전체 문서를 대상으로 동일 파이프라인을 실행합니다.
+        ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(null, question, mode); // ✅ 전체 문서를 대상으로 선택한 모드에 맞춘 파이프라인을 실행합니다.
         redirectAttributes.addFlashAttribute("alertMessage", response.getMessage()); // ✅ 파이프라인 결과 메시지를 사용자에게 보여줍니다.
         redirectAttributes.addFlashAttribute("alertType", response.isSuccess() ? "info" : "danger"); // ✅ 성공 시 정보 알림, 실패 시 경고 알림을 표시합니다.
         redirectAttributes.addFlashAttribute("askResult", response.getData()); // ✅ 구조화된 응답 본문을 화면에서 출력합니다.
         redirectAttributes.addFlashAttribute("askTarget", "ALL"); // ✅ 전체 질의임을 표시해 템플릿에서 구분합니다.
+        redirectAttributes.addFlashAttribute("askMode", mode.name()); // ✅ 선택한 모드가 다음 화면에도 유지되도록 플래시에 저장합니다.
         return "redirect:/documents"; // ✅ Post/Redirect/Get 흐름을 유지합니다.
     }
 

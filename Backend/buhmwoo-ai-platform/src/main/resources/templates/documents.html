@@ -502,6 +502,21 @@
                     <!-- ✅ 선택된 문서를 초기화해 전체 범위로 전환하는 버튼입니다. -->
                     <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="resetQuestionTarget">전체 문서로 전환</button>
                 </div>
+                <!-- ✅ RAG만 사용할지, 일반 지식 보조를 허용할지 선택할 수 있는 모드 토글입니다. -->
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-semibold">응답 모드</span>
+                        <div class="btn-group" role="group" aria-label="질문 모드 선택">
+                            <input type="radio" class="btn-check" name="mode" id="modeStrict" value="STRICT"
+                                   th:checked="${askMode == null or askMode == 'STRICT'}">
+                            <label class="btn btn-outline-secondary" for="modeStrict">엄격 모드</label>
+                            <input type="radio" class="btn-check" name="mode" id="modeHybrid" value="HYBRID"
+                                   th:checked="${askMode == 'HYBRID'}">
+                            <label class="btn btn-outline-primary" for="modeHybrid">하이브리드 모드</label>
+                        </div>
+                    </div>
+                    <small class="text-muted">하이브리드는 문서 검색 결과가 부족할 때 일반 지식으로 보완합니다.</small>
+                </div>                
                 <div class="d-flex flex-column flex-md-row gap-2">
                     <!-- ✅ 사용자가 질문을 입력하는 본문 영역입니다. -->
                     <textarea class="form-control" id="mainQuestionInput" name="question"
