@@ -141,6 +141,17 @@ public class DocumentViewController {
         return "redirect:/documents"; // ✅ 결과 확인을 위해 목록 화면으로 리다이렉트합니다.
     }
 
+    @GetMapping("/{uuid}/ask") // ✅ GET 방식으로 접근했을 때 사용자 경험을 깨뜨리지 않도록 보조 처리하는 핸들러입니다.
+    public String redirectAskDocument(
+            @PathVariable("uuid") String uuid, // ✅ 사용자가 열람 중이던 문서 정보를 다시 표시할 수 있도록 UUID를 유지합니다.
+            RedirectAttributes redirectAttributes // ✅ 안내 메시지를 리다이렉트 후에도 전달하기 위해 플래시 속성을 사용합니다.
+    ) {
+        redirectAttributes.addFlashAttribute("alertMessage", "질문은 화면 하단의 입력창을 통해 전송해주세요."); // ✅ 잘못된 요청 방식을 명확히 안내해 사용자가 흐름을 이해하도록 돕습니다.
+        redirectAttributes.addFlashAttribute("alertType", "warning"); // ✅ 경고 스타일을 적용해 올바른 사용법에 주의를 기울이게 합니다.
+        redirectAttributes.addFlashAttribute("askTarget", uuid); // ✅ 선택한 문서 정보를 다시 적용해 사용성이 떨어지지 않도록 합니다.
+        return "redirect:/documents"; // ✅ 정상적인 질문 경로로 자연스럽게 복귀시킵니다.
+    }
+
     @PostMapping("/ask") // ✅ 전체 문서를 대상으로 하는 자유 질의 핸들러입니다.
     public String askAll(
             @RequestParam("question") String question, // ✅ 전체 질의 텍스트를 전달받습니다.
@@ -156,6 +167,14 @@ public class DocumentViewController {
         return "redirect:/documents"; // ✅ Post/Redirect/Get 흐름을 유지합니다.
     }
 
+    @GetMapping("/ask") // ✅ GET으로 잘못 호출된 전체 질문 요청을 안전하게 처리하는 핸들러입니다.
+    public String redirectAskAll(RedirectAttributes redirectAttributes) { // ✅ 플래시 메시지를 사용해 안내를 전달합니다.
+        redirectAttributes.addFlashAttribute("alertMessage", "질문은 화면 하단의 입력창을 통해 전송해주세요."); // ✅ 올바른 요청 경로를 설명하는 친절한 안내 문구를 제공합니다.
+        redirectAttributes.addFlashAttribute("alertType", "warning"); // ✅ 경고 스타일로 표시해 사용자가 즉시 알아차리도록 합니다.
+        redirectAttributes.addFlashAttribute("askTarget", "ALL"); // ✅ 전체 대상 질문임을 유지해 화면 안내 문구가 정확히 표시되도록 합니다.
+        return "redirect:/documents"; // ✅ 메인 화면으로 돌려보내 정상 흐름을 유지합니다.
+    }
+        
     private SearchParams buildSearchParams(String fileName, String uploadedBy, LocalDate uploadedFrom, LocalDate uploadedTo) { // ✅ 검색 입력값을 담는 전용 DTO를 생성합니다.
         return new SearchParams( // ✅ 모든 필드를 명시적으로 채워 SpEL이 안전하게 접근하도록 합니다.
                 StringUtils.hasText(fileName) ? fileName : null,
