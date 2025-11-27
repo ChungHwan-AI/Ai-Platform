@@ -18,7 +18,7 @@ import java.util.concurrent.TimeoutException; // ✅ 블로킹 호출의 시간 
 @Component // ✅ 자동 주입을 위해 컴포넌트로 선언합니다.
 public class RagGptClient implements GptClient {
 
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값입니다.
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값(15초 → 30초 상향)입니다.
 
     private final OneAskProperties props; // ✅ 백엔드 URL을 주입받기 위한 필드입니다.
     private final WebClient ragWebClient; // ✅ 실제 HTTP 호출을 수행할 WebClient입니다.
@@ -28,12 +28,21 @@ public class RagGptClient implements GptClient {
         this.ragWebClient = ragWebClient; // ✅ 동일한 WebClient 빈을 재사용합니다.
     }
 
-    @Override
+    @Override    
     public GptResponse generate(GptRequest request) {
+        return generate(request, REQUEST_TIMEOUT); // ✅ 기본 타임아웃을 사용해 기존 동작을 유지합니다.
+    }
+
+    @Override
+    public GptResponse generate(GptRequest request, Duration timeout) { // ✅ 호출자가 원하는 대기 시간을 적용할 수 있도록 오버로드합니다.        
         String baseUrl = props.getRag().getBackendUrl(); // ✅ RAG 백엔드 기본 URL을 조회합니다.
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException("RAG 백엔드 URL이 설정되어 있지 않습니다."); // ✅ 필수 설정 누락 시 즉시 예외를 발생시킵니다.
         }
+
+        Duration effectiveTimeout = timeout != null && !timeout.isNegative() && !timeout.isZero()
+                ? timeout
+                : REQUEST_TIMEOUT; // ✅ 잘못된 입력을 방어하고 기본값으로 안전하게 대체합니다.
 
         Mono<GptResponsePayload> call = ragWebClient.post()
                 .uri(baseUrl + "/query/generate") // ✅ GPT 생성 전용 엔드포인트로 요청을 전송합니다.
@@ -41,7 +50,7 @@ public class RagGptClient implements GptClient {
                 .bodyValue(request)
                 .retrieve()
                 .bodyToMono(GptResponsePayload.class)
-                .timeout(REQUEST_TIMEOUT); // ✅ WebClient 레벨에서 타임아웃을 적용해 블로킹 호출 시 동일한 기준이 유지되도록 합니다.
+                .timeout(effectiveTimeout); // ✅ 호출 상황에 맞는 대기 시간을 유연하게 적용합니다.
 
         GptResponsePayload payload;
         try {

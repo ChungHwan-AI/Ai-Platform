@@ -71,6 +71,8 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
     private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
     private static final double DEFAULT_SCORE_THRESHOLD = 0.35; // ✅ 검색 신뢰도가 낮을 때 fallback 으로 전환하기 위한 임계값입니다.
+    private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(8); // ✅ 일상 대화는 짧은 대기 시간 내에 응답하도록 제한해 체감 속도를 높입니다.
+    private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(12); // ✅ 일반 지식 fallback도 과도한 대기 없이 빠르게 답변하도록 합니다.
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
     @Override // ✅ 인터페이스 계약을 충실히 따르고 있음을 표시합니다.
@@ -326,12 +328,17 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             baseContext += " 실시간 관측 데이터에는 직접 접근하지 못하지만, 질문에 포함된 위치·날짜·시간 단서를 활용해 예상 가능한 기온 흐름·강수 가능성·준비물 팁(우산, 겉옷 등)을 간단히 제시하고, 마지막에 최신 정보 확인이 필요하다는 점을 짧게 고지합니다."; // ✅ 실시간 한계를 최소한으로 언급하면서도 실질적인 조언을 함께 제공합니다.
         }
 
-        GptResponse response = gptClient.generate(new GptRequest(question, baseContext)); // ✅ GPT를 호출해 ChatGPT 수준의 자연스러운 답변을 생성합니다.
-        String message = Optional.ofNullable(response) // ✅ GPT 응답 객체가 null 인 상황까지 방어합니다.
-                .map(GptResponse::answer)
-                .filter(answer -> !answer.isBlank())
-                .orElse("지금은 즉시 답변을 만들지 못했어요. 다시 한번 물어봐 주실래요?"); // ✅ GPT가 응답하지 못한 경우 대비용 안내 문구입니다.
-                        
+        String message;
+        try {
+            GptResponse response = gptClient.generate(new GptRequest(question, baseContext), SMALL_TALK_TIMEOUT); // ✅ 짧은 타임아웃으로 호출해 체감 지연 없이 답변을 받습니다.
+            message = Optional.ofNullable(response) // ✅ GPT 응답 객체가 null 인 상황까지 방어합니다.
+                    .map(GptResponse::answer)
+                    .filter(answer -> !answer.isBlank())
+                    .orElse("지금은 즉시 답변을 만들지 못했어요. 다시 한번 물어봐 주실래요?"); // ✅ GPT가 응답하지 못한 경우 대비용 안내 문구입니다.
+        } catch (Exception e) {
+            log.warn("[SMALL_TALK][TIMEOUT] 빠른 응답 실패: {}", e.getMessage()); // ✅ 타임아웃 등 예외 상황을 로그로 남겨 원인 추적을 돕습니다.
+            message = "답변이 조금 지연되고 있어요. 잠시 후 다시 물어봐 주시면 더 빠르게 도와드릴게요."; // ✅ 예외 시에도 사용자에게 부드러운 안내를 제공합니다.
+        }    
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of())) // ✅ 기존 제목 생성 규칙을 재사용합니다.
                 .answer(message) // ✅ 준비한 메시지를 본문에 담습니다.
@@ -383,11 +390,16 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         String fallbackContext = "(문서/DB 검색 결과 없음) 일반적인 상식과 업계 지식을 바탕으로 질문에 답변해 주세요. " +
                 "회사 내부 정책이라고 단정하지 말고 '일반적으로'라는 표현을 사용해 주세요."; // ✅ 일반 지식 기반 답변임을 LLM에 명확히 전달하는 컨텍스트입니다.
 
-        GptResponse response = gptClient.generate(new GptRequest(question, fallbackContext)); // ✅ 동일한 GPT 클라이언트를 활용해 간단한 일반 지식 답변을 생성합니다.
-        if (response.answer() == null || response.answer().isBlank()) {
-            return "일반 지식 기반 답변을 생성하지 못했습니다."; // ✅ 예외 상황에서 사용자에게 안전한 문구를 제공합니다.
+        try {
+            GptResponse response = gptClient.generate(new GptRequest(question, fallbackContext), GENERAL_KNOWLEDGE_TIMEOUT); // ✅ 과도한 대기 없이 일반 지식 답변을 생성합니다.
+            if (response.answer() == null || response.answer().isBlank()) {
+                return "일반 지식 기반 답변을 생성하지 못했습니다."; // ✅ 예외 상황에서 사용자에게 안전한 문구를 제공합니다.
+            }
+            return response.answer();
+        } catch (Exception e) {
+            log.warn("[GENERAL_KNOWLEDGE][TIMEOUT] fallback 지식 생성 실패: {}", e.getMessage()); // ✅ 대기 초과나 기타 예외를 기록해 진단을 돕습니다.
+            return "지금은 일반 지식 답변을 준비하는 데 시간이 너무 오래 걸리고 있어요. 잠시 후 다시 시도해 주세요."; // ✅ 실패 시에도 즉시 안내 메시지를 반환합니다.
         }
-        return response.answer();
     }
     
     /**
