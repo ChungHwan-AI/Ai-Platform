@@ -2,375 +2,178 @@
 <html lang="ko" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
-    <title>문서 관리 콘솔</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
-    <!-- ✅ ChatGPT 레이아웃과 유사한 상·하단 2분할 구조를 구성하기 위한 전체 스타일을 정의합니다. -->
+    <title>문서 관리</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     <style>
-    /* ✅ 화면 전체 배경과 폰트를 설정하여 집중형 콘솔 느낌을 만듭니다. */
-        body {
-            margin: 0;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            background: linear-gradient(180deg, #f4f7fb 0%, #eef1f8 40%, #f9fafc 100%);
-            font-family: "Pretendard", "Noto Sans KR", sans-serif;
-            color: #0f172a;
-        }
-
-        /* ✅ 중앙 정렬된 고정 폭 레이아웃을 위해 래퍼에 여백을 부여합니다. */
-        .chat-wrapper {
-            width: min(1100px, 100%);
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            flex: 1 1 auto;
-            padding: 2.5rem 1.5rem 7.5rem; /* ✅ 하단 고정 바 공간을 확보하기 위해 패딩을 크게 줍니다. */
-            box-sizing: border-box;
-        }
-
-        /* ✅ 상단 헤더 카드를 유리 느낌으로 표현해 현재 상태를 강조합니다. */
-        .chat-header {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 1.5rem;
-            border: 1px solid rgba(226, 232, 240, 0.7);
-            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
-            padding: 2.5rem 2.25rem;
-            margin-bottom: 2rem;
-        }
-
-        /* ✅ 헤더 안에서 제목과 통계 정보를 나란히 배치합니다. */
-        .chat-header-top {
-            display: flex;
-            flex-wrap: wrap;
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 1.5rem;
-        }
-
-        /* ✅ 통계 뱃지 스타일을 정의합니다. */
-        .stat-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 1.25rem;
-            border-radius: 999px;
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(14, 165, 233, 0.18));
-            color: #0f172a;
-            font-weight: 600;
-        }
-
-        /* ✅ 메인 영역은 ChatGPT 메시지 흐름과 유사하게 스택으로 쌓이도록 구성합니다. */
-        .chat-feed {
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
-
-        /* ✅ 메시지 카드 공통 스타일을 정의합니다. */
-        .chat-bubble {
-            background: rgba(255, 255, 255, 0.92);
-            border-radius: 1.25rem;
-            border: 1px solid rgba(226, 232, 240, 0.8);
-            box-shadow: 0 18px 35px rgba(15, 23, 42, 0.08);
-            padding: 1.75rem;
-        }
-
-        /* ✅ 실시간 질문 진행 상황을 알려줄 상태 배지 스타일입니다. */
-        .live-status-chip {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.6rem 0.9rem;
-            border-radius: 999px;
-            background: rgba(59, 130, 246, 0.12);
-            color: #1d4ed8;
-            font-weight: 700;
-            font-size: 0.95rem;
-        }
-
-        /* ✅ 지연 안내 문구를 차분하게 보여주기 위한 스타일입니다. */
-        .delay-hint {
-            color: #475569;
-            background: rgba(248, 113, 113, 0.08);
-            border: 1px dashed rgba(248, 113, 113, 0.35);
-            border-radius: 0.85rem;
-            padding: 0.75rem 0.9rem;
-        }
-
-
-                /* ✅ 질문 전송 시 사용자에게 진행 상태를 안내하는 오버레이를 정의합니다. */
-        .loading-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.35);
-            backdrop-filter: blur(3px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1080;
-        }
-
-        /* ✅ 오버레이 내부 콘텐츠를 카드 형태로 보여줍니다. */
-        .loading-content {
-            background: rgba(15, 23, 42, 0.9);
-            color: #f8fafc;
-            padding: 2.25rem 2.5rem;
-            border-radius: 1.25rem;
-            text-align: center;
-            box-shadow: 0 22px 45px rgba(15, 23, 42, 0.25);
-        }
-
-        /* ✅ 하단 고정 입력 영역을 구성합니다. */
-        .chat-footer {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(248, 250, 252, 0.92);
-            border-top: 1px solid rgba(203, 213, 225, 0.7);
-            backdrop-filter: blur(14px);
-            padding: 1.25rem 1rem;
-            display: flex; /* ✅ 질문 입력과 버튼 묶음을 세로로 쌓아 배치합니다. */
-            justify-content: center; /* ✅ 중앙 정렬을 유지해 안정적인 구성을 만듭니다. */
-        }
-
-        /* ✅ 하단 고정 영역 내부 너비와 간격을 제어하는 컨테이너입니다. */
-        .footer-inner {
-            width: min(900px, 100%);
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            margin: 0 auto;
-        }
-
-        /* ✅ 질문 입력 박스 전반의 배경과 여백을 정의합니다. */
-        .question-box {
-            background: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(203, 213, 225, 0.6);
-            border-radius: 1rem;
-            padding: 1rem 1.25rem;
-            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
-        }
-
-        /* ✅ 질문 폼을 반응형으로 가로·세로 배치할 수 있도록 구성합니다. */
-        .question-form {
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-
-        /* ✅ 질문 입력창의 높이와 테두리를 조정해 일관된 스타일을 유지합니다. */
-        .question-form textarea {
-            min-height: 100px;
-            border-radius: 0.85rem;
-            border: 1px solid rgba(148, 163, 184, 0.6);
-            resize: vertical;
-        }
-
-        /* ✅ 질문 대상 안내 문구를 강조하기 위한 스타일입니다. */
-        .question-target {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.9rem;
-            color: #1f2937;            
-        }
-
-        /* ✅ 하단 버튼 바의 중앙 정렬과 버튼 간격을 조정합니다. */
-        .action-bar {
-            width: min(900px, 100%);
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-        }
-
-        /* ✅ 플러스 버튼에 원형 스타일을 부여해 업로드 동작을 직관화합니다. */
-        .btn-plus {
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            gap: 0.5rem;
-            font-weight: 600;
-            border-radius: 999px;
-            padding: 0.85rem 1.35rem;
-            background: linear-gradient(135deg, #2563eb, #1d4ed8);
-            color: #fff;
-        }
-
-        /* ✅ 보조 버튼을 유리 느낌으로 표현합니다. */
-        .btn-glass {
-            border-radius: 999px;
-            padding: 0.85rem 1.35rem;
-            border: 1px solid rgba(148, 163, 184, 0.45);
-            background: rgba(255, 255, 255, 0.75);
-            color: #1f2937;
-            font-weight: 600;
-        }
-
-        /* ✅ 검색 결과 행을 선택했을 때 시각적으로 표시해 주는 스타일입니다. */
-        .document-row-active {
-            outline: 2px solid rgba(37, 99, 235, 0.65);
-            outline-offset: -2px;
-            background: rgba(59, 130, 246, 0.08);
-        }
-
-        /* ✅ 상세 정보 패널의 레이아웃과 배경을 정의합니다. */
-        .detail-panel {
-            border: 1px solid rgba(226, 232, 240, 0.8);
-            border-radius: 1rem;
-            padding: 1.5rem;
-            background: rgba(255, 255, 255, 0.85);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-        }
-
-        /* ✅ 모달 내부의 카드 스타일을 통일합니다. */
-        .modal-card {
-            background: rgba(248, 250, 252, 0.88);
-            border-radius: 1.25rem;
-            border: 1px solid rgba(226, 232, 240, 0.8);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-        }
-
-        /* ✅ 긴 표 영역의 스크롤을 보장합니다. */
-        .table-scroll {
-            max-height: 420px;
-            overflow-y: auto;
-        }
-
-        /* ✅ 반응형 환경에서 패딩과 배치를 조정합니다. */
-        @media (max-width: 768px) {
-            .chat-wrapper {
-                padding: 1.75rem 1rem 8.5rem;
-            }
-
-            .chat-header {
-                padding: 1.75rem 1.5rem;
-            }
-
-            .chat-bubble {
-                padding: 1.35rem;
-            }
-            .question-form {
-                flex-direction: column;
-            }            
-        }
+        body { background: #f8fafc; }
+        .card { border: 1px solid #e2e8f0; border-radius: 14px; }
+        .shadow-soft { box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07); }
+        .doc-row-active { background: #eef2ff; outline: 2px solid #4f46e5; outline-offset: -1px; }
     </style>
 </head>
 <body>
-<div id="documentPageState" class="d-none" th:data-open-search-modal="${searchTriggered}"></div> <!-- ✅ 검색 이후에도 모달을 유지하기 위해 현재 화면 상태를 data-* 속성으로 전달합니다. -->    
-<div class="chat-wrapper">
-    <!-- ✅ 상단 헤더: 현재 문서 상태와 간단한 설명을 제공합니다. -->
-    <header class="chat-header">
-        <div class="chat-header-top">
+<div class="container py-4">
+
+    <div class="card shadow-soft mb-4">
+        <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3">
             <div>
-                <h1 class="fw-bold mb-3">문서 관리 콘솔</h1>
-                <p class="mb-2 text-muted">ChatGPT 스타일 콘솔에서 문서를 업로드하고 검색하며 질문할 수 있습니다.</p>
-                <p class="mb-0 text-muted">모든 주요 동작은 하단 버튼을 통해 실행됩니다.</p>
+                <h1 class="h4 mb-1">문서 관리</h1>
+                <p class="mb-0 text-muted">문서를 업로드하고 검색하거나 질문을 보낼 수 있습니다.</p>
             </div>
-            <span class="stat-badge">
-                <span class="fw-semibold">전체 문서</span>
-                <span class="fs-4" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')}">0</span>
-            </span>
+            <div class="text-end">
+                <div class="small text-muted">전체 문서 수</div>
+                <div class="display-6 fw-bold" th:text="${#numbers.formatInteger(page.totalElements, 1, 'COMMA')}">0</div>
+            </div>
         </div>
-    </header>
+    </div>
 
-    <main class="chat-feed">
-        <!-- ✅ 알림 메시지가 존재하면 채팅 버블로 출력합니다. -->
-        <section th:if="${alertMessage}" class="chat-bubble">
-            <!-- ✅ 알림 유형이 전달되지 않으면 info 스타일을 기본으로 적용합니다. -->
-            <div th:class="${'alert alert-' + (#strings.isEmpty(alertType) ? 'info' : alertType) + ' mb-0'}" role="alert" th:text="${alertMessage}"></div>
-        </section>
+    <div th:if="${alertMessage}" class="alert"
+         th:classappend="${'alert-' + (#strings.isEmpty(alertType) ? 'info' : alertType)}"
+         role="alert" th:text="${alertMessage}"></div>
 
-        <!-- ✅ 실시간 질문 상태를 화면 상단에 바로 노출하기 위한 버블입니다. -->
-        <section id="liveQuestionStatus" class="chat-bubble d-none">
-            <div class="d-flex align-items-center gap-3 mb-2">
-                <div class="spinner-border text-primary" role="status" aria-hidden="true" id="liveQuestionSpinner"></div>
-                <div>
-                    <div class="live-status-chip" id="liveQuestionTitle">생각 중입니다</div>
-                    <div class="text-muted" id="liveQuestionMessage">지금 응답을 준비하고 있어요.</div>
-                </div>
-            </div>
-            <div class="delay-hint d-none" id="liveQuestionDelay">답변이 조금 지연되고 있습니다. 연결이 유지되도록 기다려 주세요.</div>
-        </section> 
+    <div class="row g-4">
+        <div class="col-lg-8">
 
-        <!-- ✅ 업로드 결과가 있을 경우 상세 정보를 제공하는 버블을 추가합니다. -->
-        <section th:if="${uploadResult}" class="chat-bubble">
-            <h2 class="h5 fw-bold mb-3">업로드 완료</h2>
-            <dl class="row mb-0">
-                <dt class="col-sm-3">UUID</dt>
-                <dd class="col-sm-9" th:text="${uploadResult.uuid}"></dd>
-                <dt class="col-sm-3">파일명</dt>
-                <dd class="col-sm-9" th:text="${uploadResult.fileName}"></dd>
-                <dt class="col-sm-3">미리보기</dt>
-                <dd class="col-sm-9"><pre th:text="${uploadResult.previewText}"></pre></dd>
-            </dl>
-        </section>
-        <!-- ✅ 질의 결과가 존재하면 대화 응답처럼 노출합니다. -->
-        <section th:if="${askResult}" class="chat-bubble">
-            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-                <div>
-                    <h2 class="h5 fw-bold mb-1" th:text="${askResult.title ?: '질의 응답'}"></h2> <!-- ✅ 앱 응답 제목을 그대로 노출해 동일한 경험을 제공합니다. -->
-                    <small class="text-muted" th:text="${askResult.fromCache} ? '캐시에서 제공된 답변입니다.' : '실시간으로 생성된 답변입니다.'"></small> <!-- ✅ 캐시 사용 여부를 사용자에게 알립니다. -->
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="badge text-bg-info" th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></span> <!-- ✅ 질의 대상 문서 범위를 표시합니다. -->
-                    <span class="badge text-bg-secondary" th:if="${askResult.fromCache}" >CACHE</span> <!-- ✅ 캐시 응답일 경우 배지를 추가로 노출합니다. -->
-                </div>
-            </div>
-            <div class="mb-3">
-                <pre class="mb-0" th:text="${askResult.answer}"></pre> <!-- ✅ GPT가 생성한 본문 답변을 마크다운 형식 그대로 제공합니다. -->
-            </div>
-            <div th:if="${askResult.sources}" class="border-top pt-3">
-                <h3 class="h6 fw-semibold mb-2">참고한 문서 근거</h3> <!-- ✅ 앱에서 사용하는 출처 리스트를 동일하게 보여줍니다. -->
-                <ul class="list-unstyled mb-0">
-                    <li th:each="source : ${askResult.sources}" class="mb-2">
-                        <div class="fw-semibold">
-                            <span th:text="${source.reference}"></span> <!-- ✅ LLM 응답 인용 태그를 그대로 노출합니다. -->
-                            <span class="text-muted" th:if="${source.source}" th:text="${' · ' + source.source}"></span> <!-- ✅ 파일명 등 대표 출처를 함께 보여줍니다. -->
+            <div class="card shadow-soft mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                        <div>
+                            <h2 class="h5 mb-1">질문하기</h2>
+                            <small class="text-muted">문서를 선택하지 않으면 전체 문서를 대상으로 질문합니다.</small>
                         </div>
-                        <div class="small text-muted" th:if="${source.page != null}" th:text="${'페이지: ' + source.page}"></div> <!-- ✅ 페이지 정보가 있을 경우 추가로 표기합니다. -->
-                        <div class="small" th:text="${source.preview}"></div> <!-- ✅ 청크 요약을 노출해 사용자가 맥락을 확인할 수 있게 합니다. -->
-                    </li>
-                </ul>
+                        <span class="badge text-bg-secondary" id="questionTargetBadge"
+                              th:text="${askTarget == null || askTarget == 'ALL' ? '대상: 전체 문서' : '대상: ' + askTarget}">
+                            대상: 전체 문서
+                        </span>
+                    </div>
+
+                    <form id="questionForm" th:action="@{/documents/ask}" method="post"
+                          th:data-initial-target="${askTarget == null ? 'ALL' : askTarget}"
+                          th:data-initial-mode="${askMode == null ? 'STRICT' : askMode}">
+
+                        <div class="mb-3">
+                            <label for="questionInput" class="form-label">질문 내용</label>
+                            <textarea id="questionInput" name="question" class="form-control" rows="5" required
+                                      placeholder="예) 특정 문서의 주요 변경 사항을 알려줘"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label d-block">답변 모드</label>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="mode" id="modeStrict" value="STRICT">
+                                <label class="form-check-label" for="modeStrict">엄격</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="mode" id="modeHybrid" value="HYBRID">
+                                <label class="form-check-label" for="modeHybrid">하이브리드</label>
+                            </div>
+                        </div>
+
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-secondary"
+                                    data-bs-toggle="modal" data-bs-target="#searchModal">문서 선택</button>
+                            <button type="button" class="btn btn-outline-secondary" id="resetTargetButton">전체 문서로 전환</button>
+                            <button type="submit" class="btn btn-primary ms-auto">질문 보내기</button>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </section>
-        <!-- ✅ 최근 업로드 문서를 요약해 보여주는 버블입니다. -->
-        <section class="chat-bubble">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                <div>
-                    <h2 class="h5 fw-bold mb-1">최근 문서 하이라이트</h2>
-                    <small class="text-muted">상세 목록과 검색은 하단 버튼을 통해 확인할 수 있습니다.</small>
-                 </div>
-                <span class="badge text-bg-light" th:text="${#temporals.format(#temporals.createNow(), 'yyyy-MM-dd HH:mm')}"
-                      >--:--</span>
-             </div>
-            <div th:if="${#lists.isEmpty(documents)}" class="text-muted">현재 등록된 문서가 없습니다. 하단의 [+ 업로드] 버튼을 눌러 문서를 추가하세요.</div>
-            <ul class="list-unstyled mb-0" th:if="${!#lists.isEmpty(documents)}">
-                <li class="mb-3" th:each="doc,iterStat : ${documents}" th:if="${iterStat.index < 3}">
-                    <div class="fw-semibold" th:text="${doc.fileName}"></div>
-                    <div class="small text-muted" th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></div>
-                    <div class="small text-muted" th:text="${doc.description}"></div>
-                </li>
-                <li th:if="${documents.size() > 3}" class="text-muted small">그 외 <span th:text="${documents.size() - 3}"></span>건의 문서가 있습니다. 하단 버튼으로 전체 목록을 확인하세요.</li>
-            </ul>
-        </section>
-    </main>
+
+            <div class="card shadow-soft" th:if="${askResult}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h3 class="h6 mb-1" th:text="${askResult.title ?: '질문 응답'}">질문 응답</h3>
+                            <small class="text-muted" th:text="${askResult.fromCache} ? '캐시 응답' : '실시간 응답'"></small>
+                        </div>
+                        <span class="badge text-bg-info"
+                              th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></span>
+                    </div>
+                    <pre class="mb-3" th:text="${askResult.answer}"></pre>
+
+                    <div th:if="${askResult.sources}" class="border-top pt-3">
+                        <h4 class="h6 fw-semibold mb-2">참고 문서</h4>
+                        <ul class="mb-0 ps-3">
+                            <li th:each="source : ${askResult.sources}" class="mb-2">
+                                <div class="fw-semibold">
+                                    <span th:text="${source.reference}"></span>
+                                    <span class="text-muted"
+                                          th:if="${source.source}" th:text="${' · ' + source.source}"></span>
+                                </div>
+                                <div class="small text-muted" th:if="${source.page != null}"
+                                     th:text="${'페이지: ' + source.page}"></div>
+                                <div class="small" th:text="${source.preview}"></div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="col-lg-4">
+
+            <div class="card shadow-soft mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h2 class="h6 mb-0">최근 문서</h2>
+                        <span class="badge text-bg-light"
+                              th:text="${#temporals.format(#temporals.createNow(), 'yyyy-MM-dd HH:mm')}">--:--</span>
+                    </div>
+
+                    <div th:if="${#lists.isEmpty(documents)}" class="text-muted">등록된 문서가 없습니다.</div>
+
+                    <ul class="list-unstyled mb-0" th:if="${!#lists.isEmpty(documents)}">
+                        <li class="mb-3" th:each="doc,iter : ${documents}" th:if="${iter.index < 5}">
+                            <div class="fw-semibold" th:text="${doc.fileName}"></div>
+                            <div class="small text-muted" th:text="${doc.description}"></div>
+                            <div class="small text-muted"
+                                 th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></div>
+                        </li>
+                        <li th:if="${documents.size() > 5}" class="small text-muted">
+                            추가 문서 <span th:text="${documents.size() - 5}"></span>건이 더 있습니다.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card shadow-soft mb-4" th:if="${uploadResult}">
+                <div class="card-body">
+                    <h2 class="h6 fw-bold mb-3">업로드 완료</h2>
+                    <dl class="row mb-0">
+                        <dt class="col-4">UUID</dt>
+                        <dd class="col-8" th:text="${uploadResult.uuid}"></dd>
+                        <dt class="col-4">파일명</dt>
+                        <dd class="col-8" th:text="${uploadResult.fileName}"></dd>
+                        <dt class="col-4">미리보기</dt>
+                        <dd class="col-8">
+                            <pre class="mb-0" th:text="${uploadResult.previewText}"></pre>
+                        </dd>
+                    </dl>
+                </div>
+            </div>
+
+            <div class="card shadow-soft">
+                <div class="card-body d-grid gap-2">
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadModal">문서 업로드</button>
+                    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#searchModal">문서 검색 및 선택</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
 </div>
-<!-- ✅ 문서 업로드를 위한 모달 영역을 정의합니다. -->
+
+<!-- 업로드 모달 -->
 <div class="modal fade" id="uploadModal" tabindex="-1" aria-labelledby="uploadModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content modal-card">
-            <div class="modal-header border-0">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
                 <h1 class="modal-title fs-5" id="uploadModalLabel">문서 업로드</h1>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
             </div>
             <div class="modal-body">
-                <!-- ✅ 문서 업로드 폼을 제공하여 선택한 파일과 설명을 전송합니다. -->
                 <form th:action="@{/documents/upload}" method="post" enctype="multipart/form-data">
                     <div class="mb-3">
                         <label for="file" class="form-label">파일</label>
@@ -380,7 +183,7 @@
                         <label for="description" class="form-label">설명</label>
                         <input type="text" class="form-control" id="description" name="description" placeholder="파일 설명을 입력하세요">
                     </div>
-                    <div class="mb-4">
+                    <div class="mb-3">
                         <label for="uploadedBy" class="form-label">업로더</label>
                         <input type="text" class="form-control" id="uploadedBy" name="uploadedBy" value="system">
                     </div>
@@ -388,36 +191,42 @@
                         <button type="submit" class="btn btn-primary">업로드</button>
                     </div>
                 </form>
-             </div>
-         </div>
+            </div>
+        </div>
     </div>
 </div>
-<!-- ✅ 문서 검색과 목록 확인을 위한 모달입니다. -->
-<div class="modal fade" id="searchModal" tabindex="-1" aria-labelledby="searchModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-fullscreen-md-down modal-xl">
-        <div class="modal-content modal-card">
-            <div class="modal-header border-0">
-                <h1 class="modal-title fs-5" id="searchModalLabel">문서 검색 및 목록</h1>
+
+<!-- 검색 모달 -->
+<div class="modal fade" id="searchModal" tabindex="-1" aria-labelledby="searchModalLabel" aria-hidden="true"
+     th:data-open-search-modal="${searchTriggered}">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h1 class="modal-title fs-5" id="searchModalLabel">문서 검색</h1>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
-             </div>
+            </div>
             <div class="modal-body">
-                <!-- ✅ 검색 폼을 통해 조건을 입력하고 페이지 전체를 갱신합니다. -->
+
                 <form class="row g-3 mb-4" method="get" th:action="@{/documents}">
                     <div class="col-md-3">
                         <label for="searchFileName" class="form-label">파일명</label>
-                        <input type="text" class="form-control" id="searchFileName" name="fileName" th:value="${searchParams.fileName}">
-                     </div>
+                        <input type="text" class="form-control" id="searchFileName" name="fileName"
+                               th:value="${searchParams.fileName}">
+                    </div>
                     <div class="col-md-3">
                         <label for="searchUploadedBy" class="form-label">업로더</label>
-                        <input type="text" class="form-control" id="searchUploadedBy" name="uploadedBy" th:value="${searchParams.uploadedBy}">
+                        <input type="text" class="form-control" id="searchUploadedBy" name="uploadedBy"
+                               th:value="${searchParams.uploadedBy}">
                     </div>
                     <div class="col-md-3">
                         <label for="searchFrom" class="form-label">업로드 시작일</label>
-                        <input type="date" class="form-control" id="searchFrom" name="uploadedFrom" th:value="${searchParams.uploadedFrom}">
+                        <input type="date" class="form-control" id="searchFrom" name="uploadedFrom"
+                               th:value="${searchParams.uploadedFrom}">
                     </div>
                     <div class="col-md-3">
                         <label for="searchTo" class="form-label">업로드 종료일</label>
-                        <input type="date" class="form-control" id="searchTo" name="uploadedTo" th:value="${searchParams.uploadedTo}">
+                        <input type="date" class="form-control" id="searchTo" name="uploadedTo"
+                               th:value="${searchParams.uploadedTo}">
                     </div>
                     <div class="col-12 text-end">
                         <button type="submit" class="btn btn-secondary">검색</button>
@@ -425,9 +234,8 @@
                     </div>
                 </form>
 
-                <!-- ✅ 전체 문서 목록을 표 형태로 보여주며 스크롤을 지원합니다. -->
-                <div class="table-scroll mb-3">
-                    <table class="table align-middle">
+                <div class="table-responsive mb-3">
+                    <table class="table table-hover align-middle">
                         <thead class="table-light">
                         <tr>
                             <th>UUID</th>
@@ -441,634 +249,285 @@
                         <tr th:if="${#lists.isEmpty(documents)}">
                             <td colspan="5" class="text-center text-muted">조회된 문서가 없습니다.</td>
                         </tr>
+
                         <tr th:each="doc : ${documents}"
-                            th:attr="data-document-row=${doc.uuid}, data-document-name=${doc.fileName}, data-document-description=${doc.description}, data-document-uploaded-by=${doc.uploadedBy}, data-document-uploaded-at=${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}, data-document-size=${#numbers.formatInteger(doc.size, 1, 'COMMA')}"
-                            class="cursor-pointer">
+                            th:attr="data-doc-uuid=${doc.uuid},
+                                     data-doc-name=${doc.fileName},
+                                     data-doc-desc=${doc.description},
+                                     data-doc-uploader=${doc.uploadedBy},
+                                     data-doc-uploaded=${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')},
+                                     data-doc-size=${#numbers.formatInteger(doc.size, 1, 'COMMA')}">
                             <td class="small text-break" th:text="${doc.uuid}"></td>
                             <td>
                                 <div class="fw-semibold" th:text="${doc.fileName}"></div>
-                                <div class="text-muted small" th:text="${doc.description}"></div>
+                                <div class="small text-muted" th:text="${doc.description}"></div>
                             </td>
                             <td th:text="${doc.uploadedBy}"></td>
                             <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
                             <td class="text-end" th:text="${#numbers.formatInteger(doc.size, 1, 'COMMA')}"></td>
                         </tr>
+
                         </tbody>
                     </table>
                 </div>
-                <!-- ✅ 선택한 문서의 상세 정보를 보여줄 패널을 제공합니다. -->
-                <div class="detail-panel mt-4" id="documentDetailPanel"
-                     th:attr="data-download-base=@{/api/documents/download/}, data-delete-base=@{/documents/}">
-                    <h3 class="h6 fw-bold mb-3">선택한 문서 상세</h3>
-                    <p class="text-muted mb-0" id="documentDetailPlaceholder">검색된 문서를 클릭하면 상세 정보와 사용 가능한 작업이 여기에 나타납니다.</p>
-                    <div id="documentDetailContent" class="d-none">
+
+                <div class="border rounded p-3 mb-4" id="documentDetailPanel"
+                     th:attr="data-download-base=@{/api/documents/download/},
+                              data-delete-base=@{/documents/}">
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h2 class="h6 mb-0">선택한 문서</h2>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                id="clearSelectionButton">선택 해제</button>
+                    </div>
+
+                    <p class="text-muted mb-0" id="detailPlaceholder">
+                        표에서 문서를 선택하면 상세 정보와 작업 버튼이 표시됩니다.
+                    </p>
+
+                    <div id="detailContent" class="d-none">
                         <dl class="row mb-3">
                             <dt class="col-sm-3">파일명</dt>
-                            <dd class="col-sm-9" id="detailFileName"></dd>
+                            <dd class="col-sm-9" id="detailName"></dd>
                             <dt class="col-sm-3">UUID</dt>
                             <dd class="col-sm-9" id="detailUuid"></dd>
                             <dt class="col-sm-3">업로더</dt>
-                            <dd class="col-sm-9" id="detailUploadedBy"></dd>
+                            <dd class="col-sm-9" id="detailUploader"></dd>
                             <dt class="col-sm-3">업로드 일시</dt>
-                            <dd class="col-sm-9" id="detailUploadedAt"></dd>
+                            <dd class="col-sm-9" id="detailUploaded"></dd>
                             <dt class="col-sm-3">설명</dt>
-                            <dd class="col-sm-9" id="detailDescription"></dd>
+                            <dd class="col-sm-9" id="detailDesc"></dd>
                             <dt class="col-sm-3">크기</dt>
                             <dd class="col-sm-9" id="detailSize"></dd>
                         </dl>
+
                         <div class="d-flex flex-wrap gap-2">
-                            <a id="documentDownloadLink" class="btn btn-sm btn-outline-secondary disabled" href="#" target="_blank" aria-disabled="true">다운로드</a>
-                            <form id="documentDeleteForm" method="post" class="d-flex d-none"
+                            <a id="downloadLink" class="btn btn-sm btn-outline-secondary disabled"
+                               href="#" target="_blank" aria-disabled="true">다운로드</a>
+
+                            <form id="deleteForm" method="post"
+                                  class="d-none"
                                   onsubmit="return confirm('문서를 삭제하시겠습니까?');">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
                             </form>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2 mt-3">
-                            <button type="button" class="btn btn-sm btn-primary" id="applySelectedDocument" disabled>선택 문서 적용</button> <!-- ✅ 사용자가 특정 문서를 선택한 뒤 메인 질문 영역에 즉시 반영하도록 확정하는 버튼입니다. -->
-                            <button type="button" class="btn btn-sm btn-outline-secondary" id="applyAllDocuments">전체 문서 질문</button> <!-- ✅ 선택을 취소하고 전체 문서를 대상으로 다시 질문할 수 있게 돕는 버튼입니다. -->
-                        </div>
-                        <div class="alert alert-info small mt-3 mb-0" id="documentSelectionHint">선택된 문서는 [선택 문서 적용] 버튼을 누르거나 창을 닫으면 하단 질문 영역에 대상 문서로 반영됩니다.
 
-                        </div> <!-- ✅ 선택 적용 방법을 명시해 사용자가 흐름을 이해할 수 있도록 안내 문구를 갱신합니다. -->
+                            <button type="button" class="btn btn-sm btn-primary"
+                                    id="applySelectionButton" disabled>이 문서에 질문</button>
+                        </div>
                     </div>
                 </div>
-                <!-- ✅ 페이지 네비게이션을 모달 하단에 유지합니다. -->
-                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-                    <div class="text-muted">
-                        <span th:text="${page.page + 1}"></span>
-                        /
+
+                <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-2">
+                    <div class="text-muted small">
+                        <span th:text="${page.page + 1}"></span> /
                         <span th:text="${page.totalPages == 0 ? 1 : page.totalPages}"></span>
                         페이지
-                     </div>
+                    </div>
+
                     <nav>
                         <ul class="pagination mb-0">
+
                             <li class="page-item" th:classappend="${page.first} ? ' disabled'">
                                 <a class="page-link"
-                                   th:href="@{/documents(page=${page.page - 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">이전</a>
+                                   th:href="@{/documents(page=${page.page - 1}, size=${page.size},
+                                             fileName=${searchParams.fileName},
+                                             uploadedBy=${searchParams.uploadedBy},
+                                             uploadedFrom=${searchParams.uploadedFrom},
+                                             uploadedTo=${searchParams.uploadedTo})}">
+                                    이전
+                                </a>
                             </li>
-                            <li class="page-item" th:each="pageNumber : ${pageNumbers}" th:classappend="${pageNumber == page.page} ? ' active'">
-                                <a class="page-link" th:text="${pageNumber + 1}"
-                                   th:href="@{/documents(page=${pageNumber}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}"></a>
+
+                            <li class="page-item" th:each="num : ${pageNumbers}"
+                                th:classappend="${num == page.page} ? ' active'">
+                                <a class="page-link"
+                                   th:text="${num + 1}"
+                                   th:href="@{/documents(page=${num}, size=${page.size},
+                                             fileName=${searchParams.fileName},
+                                             uploadedBy=${searchParams.uploadedBy},
+                                             uploadedFrom=${searchParams.uploadedFrom},
+                                             uploadedTo=${searchParams.uploadedTo})}">
+                                </a>
                             </li>
+
                             <li class="page-item" th:classappend="${page.last} ? ' disabled'">
                                 <a class="page-link"
-                                   th:href="@{/documents(page=${page.page + 1}, size=${page.size}, fileName=${searchParams.fileName}, uploadedBy=${searchParams.uploadedBy}, uploadedFrom=${searchParams.uploadedFrom}, uploadedTo=${searchParams.uploadedTo})}">다음</a>
+                                   th:href="@{/documents(page=${page.page + 1}, size=${page.size},
+                                             fileName=${searchParams.fileName},
+                                             uploadedBy=${searchParams.uploadedBy},
+                                             uploadedFrom=${searchParams.uploadedFrom},
+                                             uploadedTo=${searchParams.uploadedTo})}">
+                                    다음
+                                </a>
                             </li>
+
                         </ul>
                     </nav>
-                 </div>
-             </div>
-         </div>
-     </div>
- </div> 
-<!-- ✅ 하단 고정 버튼 바: 모든 주요 액션을 여기서 실행합니다. -->
-<footer class="chat-footer">
-    <div class="footer-inner">
-        <!-- ✅ 질문 입력과 대상 안내를 묶은 하단 상자를 제공합니다. -->
-        <div class="question-box">
-        <!-- ✅ 기본 액션을 지정해 자바스크립트가 동작하지 않아도 전체 질의 엔드포인트로 전송되도록 합니다. -->            
-            <form id="mainQuestionForm" class="question-form"
-                  th:action="@{/documents/ask}"
-                  th:attr="data-ask-all=@{/api/documents/ask}, data-ask-base=@{/api/documents/}, data-initial-target=${askTarget != null ? askTarget : 'ALL'}" 
-                  method="post">
-                <div class="question-target">
-                    <span id="questionTargetLabel"
-                          th:text="${askTarget == null or askTarget == 'ALL' ? '전체 문서를 대상으로 질문합니다.' : '선택된 문서(UUID): ' + askTarget}">전체 문서를 대상으로 질문합니다.</span>
-                    <!-- ✅ 선택된 문서를 초기화해 전체 범위로 전환하는 버튼입니다. -->
-                    <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="resetQuestionTarget">전체 문서로 전환</button>
                 </div>
-                <!-- ✅ RAG만 사용할지, 일반 지식 보조를 허용할지 선택할 수 있는 모드 토글입니다. -->
-                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="fw-semibold">응답 모드</span>
-                        <div class="btn-group" role="group" aria-label="질문 모드 선택">
-                            <input type="radio" class="btn-check" name="mode" id="modeStrict" value="STRICT"
-                                   th:checked="${askMode == null or askMode == 'STRICT'}">
-                            <label class="btn btn-outline-secondary" for="modeStrict">엄격 모드</label>
-                            <input type="radio" class="btn-check" name="mode" id="modeHybrid" value="HYBRID"
-                                   th:checked="${askMode == 'HYBRID'}">
-                            <label class="btn btn-outline-primary" for="modeHybrid">하이브리드 모드</label>
-                        </div>
-                    </div>
-                    <small class="text-muted">하이브리드는 문서 검색 결과가 부족할 때 일반 지식으로 보완합니다.</small>
-                </div>                
-                <div class="d-flex flex-column flex-md-row gap-2">
-                    <!-- ✅ 사용자가 질문을 입력하는 본문 영역입니다. -->
-                    <textarea class="form-control" id="mainQuestionInput" name="question"
-                              placeholder="질문을 입력하세요" required></textarea>
-                    <div class="d-flex flex-md-column gap-2">
-                        <!-- ✅ 질문을 전송하는 메인 실행 버튼입니다. -->
-                        <button type="submit" class="btn btn-primary flex-fill">질문하기</button>
-                    </div>
-                </div>
-            </form>
-        </div>
-        <div class="action-bar">
-            <button class="btn btn-plus" data-bs-toggle="modal" data-bs-target="#uploadModal">＋ 업로드</button>
-            <button class="btn btn-glass" data-bs-toggle="modal" data-bs-target="#searchModal">문서 검색 / 목록</button>
-        </div>
-    </div>
-</footer>
 
-<!-- ✅ 질문이 처리되는 동안 시각적 피드백을 제공하는 오버레이입니다. -->
-<div id="questionLoadingOverlay" class="loading-overlay d-none">
-    <div class="loading-content">
-        <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
-        <p class="mt-3 mb-0 fw-semibold" id="questionOverlayMessage">생각 중입니다… 잠시만 기다려 주세요.</p>
+            </div>
+        </div>
     </div>
 </div>
 
- <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
-    <script>
-        // ✅ 문서 선택과 질문 전송 흐름을 제어하는 초기화 스크립트입니다.        
-        document.addEventListener('DOMContentLoaded', function () {
-            var questionForm = document.getElementById('mainQuestionForm'); // ✅ 하단 질문 입력 폼을 찾아 선택된 문서 정보를 연동합니다.
-            if (!questionForm) {
-                return; // ✅ 폼이 없으면 초기화 로직이 필요하지 않으므로 조기에 종료합니다.
-            }
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
 
-            var searchModalElement = document.getElementById('searchModal'); // ✅ 검색 모달 요소를 찾아 이후 자동 열기 및 닫기 동작에 활용합니다.
-            var searchModalInstance = null; // ✅ 부트스트랩 모달 인스턴스를 저장해 재사용합니다.
-            if (searchModalElement && typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                searchModalInstance = bootstrap.Modal.getOrCreateInstance(searchModalElement); // ✅ 부트스트랩 유틸리티를 사용해 모달 인스턴스를 준비합니다.
-            }
-            var pageState = document.getElementById('documentPageState'); // ✅ 서버에서 전달한 모달 오픈 여부를 확인하기 위한 요소를 조회합니다.
-            var shouldAutoOpenModal = pageState && pageState.dataset.openSearchModal === 'true'; // ✅ 자동으로 모달을 열어야 하는지 여부를 미리 계산합니다.
-            if (shouldAutoOpenModal && searchModalElement) {
-                searchModalElement.addEventListener('shown.bs.modal', function () {
-                    var searchField = document.getElementById('searchFileName');
-                    if (searchField) {
-                        searchField.focus(); // ✅ 모달이 다시 열리면 곧바로 검색 입력에 포커스를 맞춰 재검색이 편하도록 합니다.
-                    }
-                });
-            }
-            if (shouldAutoOpenModal && searchModalInstance) {
-                searchModalInstance.show(); // ✅ 검색이나 페이지 이동 이후에는 화면 로딩 시 모달을 자동으로 다시 표시합니다.
-            }
+<script>
+    var selectedDocument = null;
 
-            var askAllUrl = questionForm.dataset.askAll || ''; // ✅ 전체 문서 질의 엔드포인트 경로를 data-* 속성에서 읽어옵니다.
-            var askBase = questionForm.dataset.askBase || ''; // ✅ 특정 문서를 대상으로 질문할 때 사용할 기본 경로를 준비합니다.
-            if (askBase && !askBase.endsWith('/')) {
-                askBase += '/'; // ✅ URL 결합 시 슬래시 누락으로 인한 404를 방지하기 위해 후행 슬래시를 보정합니다.
-            }
+    function updateQuestionAction() {
+        var form = document.getElementById('questionForm');
+        if (!form) return;
 
-            var targetLabel = document.getElementById('questionTargetLabel');
-            var resetButton = document.getElementById('resetQuestionTarget');
-            var detailPanel = document.getElementById('documentDetailPanel');
-            var detailContent = document.getElementById('documentDetailContent');
-            var detailPlaceholder = document.getElementById('documentDetailPlaceholder');
-            var detailFileName = document.getElementById('detailFileName');
-            var detailUuid = document.getElementById('detailUuid');
-            var detailUploadedBy = document.getElementById('detailUploadedBy');
-            var detailUploadedAt = document.getElementById('detailUploadedAt');
-            var detailDescription = document.getElementById('detailDescription');
-            var detailSize = document.getElementById('detailSize');
-            var loadingOverlay = document.getElementById('questionLoadingOverlay'); // ✅ 질문 처리 중 진행 상태를 보여줄 오버레이 요소를 찾습니다.
-            var overlayMessage = document.getElementById('questionOverlayMessage'); // ✅ 지연 안내 문구를 실시간으로 갱신할 요소를 준비합니다.
-            var submitButton = questionForm.querySelector('button[type="submit"]'); // ✅ 제출 버튼을 찾아 로딩 상태를 표시합니다.
-            var originalSubmitMarkup = submitButton ? submitButton.innerHTML : ''; // ✅ 로딩 이후 버튼 내용을 복원하기 위해 원본 HTML을 저장합니다.
-            var downloadLink = document.getElementById('documentDownloadLink');
-            var deleteForm = document.getElementById('documentDeleteForm');
-            var confirmButton = document.getElementById('applySelectedDocument'); // ✅ 사용자가 선택한 문서를 확정할 버튼을 가져옵니다.
-            var applyAllButton = document.getElementById('applyAllDocuments'); // ✅ 전체 문서 대상으로 전환하는 버튼을 가져옵니다.            
-            var tableRows = Array.prototype.slice.call(document.querySelectorAll('tr[data-document-row]'));
-            var downloadBase = detailPanel ? detailPanel.dataset.downloadBase : '';
-            var deleteBase = detailPanel ? detailPanel.dataset.deleteBase : '';
+        if (selectedDocument && selectedDocument.uuid) {
+            form.action = '/documents/' + selectedDocument.uuid + '/ask';
+            document.getElementById('questionTargetBadge').textContent =
+                '대상: ' + selectedDocument.uuid;
+        } else {
+            form.action = '/documents/ask';
+            document.getElementById('questionTargetBadge').textContent =
+                '대상: 전체 문서';
+        }
+    }
 
-            var selectedUuid = '';
-            var selectedName = '';
-            var isThinking = false; // ✅ 현재 질문이 처리 중인지 여부를 추적합니다.
-            var delayTimer = null; // ✅ 일정 시간이 지나면 지연 안내를 노출하기 위한 타이머입니다.
-            var pendingController = null; // ✅ 사용자가 중간에 요청을 취소할 수 있도록 AbortController를 저장합니다.
+    function applyInitialMode() {
+        var form = document.getElementById('questionForm');
+        if (!form) return;
 
-            var liveStatusSection = document.getElementById('liveQuestionStatus'); // ✅ 화면 상단에 실시간 상태를 보여줄 버블을 찾습니다.
-            var liveStatusTitle = document.getElementById('liveQuestionTitle');
-            var liveStatusMessage = document.getElementById('liveQuestionMessage');
-            var liveStatusDelay = document.getElementById('liveQuestionDelay');
-            var liveStatusSpinner = document.getElementById('liveQuestionSpinner');
+        var mode = form.dataset.initialMode || 'STRICT';
+        var target = mode === 'HYBRID'
+            ? document.getElementById('modeHybrid')
+            : document.getElementById('modeStrict');
 
-            function setConfirmButtonState(isActive) { // ✅ 선택 상태에 따라 적용 버튼을 활성화하거나 비활성화하는 헬퍼입니다.
-                if (!confirmButton) {
-                    return;
-                }
-                if (isActive) {
-                    confirmButton.removeAttribute('disabled');
-                } else {
-                    confirmButton.setAttribute('disabled', 'disabled');
-                }
-            }            
-            // ✅ 질문 대상 상태를 갱신하는 헬퍼 함수입니다.
-            function applyTarget(uuid, name) {
-                selectedUuid = uuid || '';
-                selectedName = name || '';
-                questionForm.dataset.selectedUuid = selectedUuid;
+        if (target) target.checked = true;
+    }
 
-                if (selectedUuid) {
-                    if (targetLabel) {
-                        targetLabel.textContent = '선택된 문서에 질문합니다: ' + (selectedName || ('UUID ' + selectedUuid));
-                    }
-                    if (resetButton) {
-                        resetButton.classList.remove('d-none'); // ✅ 초기화 버튼을 눌렀을 때 전체 문서 모드로 되돌립니다.
-                    }
-                    setConfirmButtonState(true);
-                } else {
-                    if (targetLabel) {
-                        targetLabel.textContent = '전체 문서를 대상으로 질문합니다.';
-                    }
-                    if (resetButton) {
-                        resetButton.classList.add('d-none');
-                    }
-                    setConfirmButtonState(false);                    
-                }
-            }
+    function bindRowSelection() {
+        var rows = Array.from(document.querySelectorAll('[data-doc-uuid]'));
 
-            // ✅ 상세 패널을 업데이트하고 필요한 경우 질문 대상을 연결합니다.
-            function renderDetail(row, shouldUpdateTarget) {
-                if (!row || !detailPanel) {            
-                    return;
-                }
-                tableRows.forEach(function (item) {
-                    item.classList.remove('document-row-active');
-                });
-                row.classList.add('document-row-active');
+        var detailPlaceholder = document.getElementById('detailPlaceholder');
+        var detailContent = document.getElementById('detailContent');
 
-                var uuid = row.dataset.documentRow || '';
-                var name = row.dataset.documentName || '';
-                var uploader = row.dataset.documentUploadedBy || '';
-                var uploadedAt = row.dataset.documentUploadedAt || '';
-                var description = row.dataset.documentDescription || '';
-                var size = row.dataset.documentSize || '';
+        var nameEl = document.getElementById('detailName');
+        var uuidEl = document.getElementById('detailUuid');
+        var uploaderEl = document.getElementById('detailUploader');
+        var uploadedEl = document.getElementById('detailUploaded');
+        var descEl = document.getElementById('detailDesc');
+        var sizeEl = document.getElementById('detailSize');
 
-                if (detailPlaceholder && detailContent) {
-                    detailPlaceholder.classList.add('d-none');
-                    detailContent.classList.remove('d-none');
-                }
-                if (detailFileName) {
-                    detailFileName.textContent = name || '-';
-                }
-                if (detailUuid) {
-                    detailUuid.textContent = uuid || '-';
-                }
-                if (detailUploadedBy) {
-                    detailUploadedBy.textContent = uploader || '-';
-                }
-                if (detailUploadedAt) {
-                    detailUploadedAt.textContent = uploadedAt || '-';
-                }
-                if (detailDescription) {
-                    detailDescription.textContent = description || '-';
-                }
-                if (detailSize) {
-                    detailSize.textContent = size ? size + ' bytes' : '-';
-                }
+        var downloadLink = document.getElementById('downloadLink');
+        var deleteForm = document.getElementById('deleteForm');
+        var applyButton = document.getElementById('applySelectionButton');
 
-                if (downloadLink && downloadBase && uuid) {
-                    downloadLink.href = downloadBase + uuid;
+        var panel = document.getElementById('documentDetailPanel');
+        var downloadBase = panel ? panel.dataset.downloadBase : '';
+        var deleteBase = panel ? panel.dataset.deleteBase : '';
+
+        rows.forEach(function (row) {
+            row.addEventListener('click', function () {
+
+                rows.forEach(function (r) { r.classList.remove('doc-row-active'); });
+                row.classList.add('doc-row-active');
+
+                selectedDocument = {
+                    uuid: row.dataset.docUuid,
+                    name: row.dataset.docName,
+                    uploader: row.dataset.docUploader,
+                    uploaded: row.dataset.docUploaded,
+                    desc: row.dataset.docDesc,
+                    size: row.dataset.docSize
+                };
+
+                detailPlaceholder.classList.add('d-none');
+                detailContent.classList.remove('d-none');
+
+                nameEl.textContent = selectedDocument.name || '';
+                uuidEl.textContent = selectedDocument.uuid || '';
+                uploaderEl.textContent = selectedDocument.uploader || '';
+                uploadedEl.textContent = selectedDocument.uploaded || '';
+                descEl.textContent = selectedDocument.desc || '';
+                sizeEl.textContent = selectedDocument.size ? selectedDocument.size + ' bytes' : '';
+
+                if (downloadBase && selectedDocument.uuid) {
+                    downloadLink.href = downloadBase + selectedDocument.uuid;
                     downloadLink.classList.remove('disabled');
-                    downloadLink.setAttribute('aria-disabled', 'false');
                 }
 
-                if (deleteForm && deleteBase && uuid) {
-                    deleteForm.action = deleteBase + uuid + '/delete';
+                if (deleteBase && selectedDocument.uuid) {
+                    deleteForm.action = deleteBase + selectedDocument.uuid + '/delete';
                     deleteForm.classList.remove('d-none');
                 }
 
-                if (shouldUpdateTarget) {
-                    applyTarget(uuid, name);
-                } else if (uuid) {
-                    setConfirmButtonState(true); // ✅ 기존 선택을 복원할 때도 버튼이 즉시 활성화되도록 보정합니다.                    
-                }
-            }
-
-            // ✅ 각 행을 클릭했을 때 선택 로직이 실행되도록 이벤트를 연결합니다.
-            tableRows.forEach(function (row) {
-                row.addEventListener('click', function () {
-                    renderDetail(row, true);
-                });
+                applyButton.disabled = false;
             });
+        });
+    }
 
-            // ✅ 초기 진입 시 기존 선택 정보를 반영하거나 기본 상태를 구성합니다.
-            var initialTarget = questionForm.dataset.initialTarget;
-            if (initialTarget && initialTarget !== 'ALL') {
-                var matched = tableRows.find(function (row) {
-                    return row.dataset.documentRow === initialTarget;
-                });
-                if (matched) {
-                    renderDetail(matched, false);
-                    applyTarget(initialTarget, matched.dataset.documentName || initialTarget);
-                } else {
-                    applyTarget(initialTarget, initialTarget);
-                }
-            } else {
-                applyTarget('', '');
-                if (tableRows.length === 1) {
-                    renderDetail(tableRows[0], false);
-                }
-            }
+    function clearSelection() {
+        selectedDocument = null;
 
-                        function resetSelectionState() { // ✅ 선택 정보를 초기화하는 공통 루틴입니다.
-                applyTarget('', '');
-                tableRows.forEach(function (row) {
-                    row.classList.remove('document-row-active');
-                });
-                if (detailPlaceholder && detailContent) {
-                    detailContent.classList.add('d-none');
-                    detailPlaceholder.classList.remove('d-none');
-                }
-                if (downloadLink) {
-                    downloadLink.href = '#';
-                    downloadLink.classList.add('disabled');
-                    downloadLink.setAttribute('aria-disabled', 'true');
-                }
-                if (deleteForm) {
-                    deleteForm.action = '';
-                    deleteForm.classList.add('d-none');
-                }
-            }
-            if (resetButton) {
-                resetButton.addEventListener('click', function () {
-                    resetSelectionState();
-                });
-            }
+        var rows = document.querySelectorAll('[data-doc-uuid]');
+        rows.forEach(r => r.classList.remove('doc-row-active'));
 
-            if (applyAllButton) {
-                applyAllButton.addEventListener('click', function () {
-                    resetSelectionState(); // ✅ 모달 내부에서도 즉시 전체 문서 모드로 전환합니다.
-                    if (searchModalInstance) {
-                        searchModalInstance.hide();
-                    }
-                });
-            }
+        var detailPlaceholder = document.getElementById('detailPlaceholder');
+        var detailContent = document.getElementById('detailContent');
 
-            if (confirmButton) {
-                confirmButton.addEventListener('click', function () {
-                    if (!selectedUuid) {
-                        alert('선택된 문서가 없습니다. 목록에서 문서를 선택해주세요.'); // ✅ 사용자가 선택 없이 버튼을 누르면 안내 메시지를 제공합니다.
-                        return;
-                    }
-                    applyTarget(selectedUuid, selectedName); // ✅ 최신 선택 정보를 다시 한 번 확정해 하단 폼에 반영합니다.
-                    if (searchModalInstance) {
-                        searchModalInstance.hide(); // ✅ 확정 후 모달을 닫아 메인 화면으로 자연스럽게 전환합니다.
-                    }
-                });
-            }
+        detailPlaceholder.classList.remove('d-none');
+        detailContent.classList.add('d-none');
 
-            // ✅ 폼 전송 시 선택 상태에 맞춰 요청 경로를 조정합니다.
-            questionForm.addEventListener('submit', function (event) {
-                event.preventDefault(); // ✅ 페이지 전체 새로고침을 막고 비동기로 상태를 관리합니다.
+        var applyButton = document.getElementById('applySelectionButton');
+        if (applyButton) applyButton.disabled = true;
 
-                var questionInput = document.getElementById('mainQuestionInput');
-                var modeInput = questionForm.querySelector('input[name="mode"]:checked');
-                var questionValue = questionInput ? questionInput.value.trim() : '';
-                var modeValue = modeInput ? modeInput.value : 'STRICT';
+        var downloadLink = document.getElementById('downloadLink');
+        downloadLink.href = '#';
+        downloadLink.classList.add('disabled');
 
-                if (!questionValue) {
-                    alert('질문을 입력해주세요.'); // ✅ 빈 입력을 바로 안내해 잘못된 요청을 방지합니다.
-                    return;
-                }
-                
-                if (isThinking) {
-                    stopThinking('생각을 중단했습니다. 새로 질문하려면 다시 눌러주세요.'); // ✅ 두 번째 클릭 시 진행 중인 요청을 취소합니다.
-                    return;                
-                }
-                var targetUrl = selectedUuid ? ((askBase || '/documents/') + selectedUuid + '/ask') : (askAllUrl || '/documents/ask');
-                var queryParams = new URLSearchParams({ question: questionValue, mode: modeValue });
+        var deleteForm = document.getElementById('deleteForm');
+        deleteForm.action = '';
+        deleteForm.classList.add('d-none');
 
-                startThinkingUi(); // ✅ 상태 버블, 버튼, 오버레이를 로딩 모드로 전환합니다.
+        updateQuestionAction();
+    }
 
-                pendingController = new AbortController();
-                fetch(targetUrl + '?' + queryParams.toString(), { // ✅ 백엔드가 제공하는 질의 API를 호출합니다.
-                    method: 'GET',
-                    signal: pendingController.signal
-                }).then(function (response) {
-                    if (!response.ok) {
-                        throw new Error('응답을 불러오지 못했습니다.'); // ✅ HTTP 오류를 잡아 사용자에게 안내합니다.
-                    }
-                    return response.json();
-                }).then(function (payload) {
-                    renderAnswerBubble(payload && payload.data ? payload.data : null); // ✅ 서버 응답을 화면 버블로 렌더링합니다.
-                    finishThinking('답변을 준비했습니다. 아래 결과를 확인하세요.'); // ✅ 정상 완료 시 상태를 해제합니다.
-                }).catch(function (error) {
-                    if (error.name === 'AbortError') {
-                        return; // ✅ 이미 stopThinking 에서 UI 를 정리했으므로 별도 처리가 필요 없습니다.
-                    }
-                    stopThinking('응답이 지연되거나 실패했습니다. 다시 시도해주세요.'); // ✅ 오류 시 상태를 해제하면서 안내합니다.
-                    console.error(error);
-                });                
-            });
+    document.addEventListener('DOMContentLoaded', function () {
+        var form = document.getElementById('questionForm');
+        var initialTarget = form ? form.dataset.initialTarget : 'ALL';
 
-            if (!shouldAutoOpenModal && searchModalElement) {
-                searchModalElement.addEventListener('shown.bs.modal', function () {
-                    var searchField = document.getElementById('searchFileName');
-                    if (searchField) {
-                        searchField.focus(); // ✅ 수동으로 모달을 열었을 때도 검색 필드를 자동 포커싱해 입력 편의성을 높입니다.
-                    }
-                });
-            }
+        if (initialTarget && initialTarget !== 'ALL') {
+            selectedDocument = { uuid: initialTarget };
+        }
 
-            window.addEventListener('pageshow', function () {
-                // ✅ 히스토리 이동 시 잔여 로딩 상태를 안전하게 초기화합니다.
-                resetThinkingUi();
-            });
+        updateQuestionAction();
+        applyInitialMode();
+        bindRowSelection();
 
-            function startThinkingUi() { // ✅ 질문 시작 시 UI를 로딩 모드로 전환하는 헬퍼입니다.
-                isThinking = true;
-                if (loadingOverlay) {
-                    loadingOverlay.classList.remove('d-none');
-                }
-                if (overlayMessage) {
-                    overlayMessage.textContent = '생각 중입니다… 곧 답변을 받을 수 있어요.';
-                }
-                if (submitButton) {
-                    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>생각 중… (다시 누르면 중단)';
-                    submitButton.disabled = false; // ✅ 중단 기능을 제공하기 위해 비활성화하지 않습니다.
-                }
-                if (liveStatusSection && liveStatusTitle && liveStatusMessage && liveStatusSpinner) {
-                    liveStatusSection.classList.remove('d-none');
-                    liveStatusSpinner.classList.remove('d-none');
-                    liveStatusTitle.textContent = '생각 중입니다';
-                    liveStatusMessage.textContent = '현재 응답을 요약하고 있어요. 잠시만 기다려 주세요.';
-                }
-                if (liveStatusDelay) {
-                    liveStatusDelay.classList.add('d-none');
-                }
-                if (delayTimer) {
-                    clearTimeout(delayTimer);
-                }
-                delayTimer = setTimeout(function () {
-                    if (!isThinking) {
-                        return; // ✅ 이미 완료되었다면 지연 안내를 건너뜁니다.
-                    }
-                    if (overlayMessage) {
-                        overlayMessage.textContent = '답변이 지연되고 있습니다. 연결을 유지하고 있어요.';
-                    }
-                    if (liveStatusDelay) {
-                        liveStatusDelay.classList.remove('d-none');
-                    }
-                    if (liveStatusTitle) {
-                        liveStatusTitle.textContent = '조금만 더 기다려 주세요';
-                    }
-                }, 6000);
-            }
+        var applyButton = document.getElementById('applySelectionButton');
+        applyButton.addEventListener('click', function () {
+            updateQuestionAction();
+            var modal = bootstrap.Modal.getInstance(
+                document.getElementById('searchModal')
+            );
+            modal.hide();
+        });
 
-            function renderAnswerBubble(answer) { // ✅ 서버가 돌려준 응답을 채팅 버블 형태로 생성합니다.
-                if (!answer) {
-                    return;
-                }
+        var resetButton = document.getElementById('resetTargetButton');
+        resetButton.addEventListener('click', function () {
+            clearSelection();
+        });
 
-                var chatFeed = document.querySelector('.chat-feed');
-                if (!chatFeed) {
-                    return;
-                }
+        var clearButton = document.getElementById('clearSelectionButton');
+        clearButton.addEventListener('click', function () {
+            clearSelection();
+        });
 
-                var wrapper = document.createElement('section');
-                wrapper.className = 'chat-bubble';
+        var searchModalEl = document.getElementById('searchModal');
+        if (searchModalEl.dataset.openSearchModal === 'true') {
+            new bootstrap.Modal(searchModalEl).show();
+        }
+    });
+</script>
 
-                var header = document.createElement('div');
-                header.className = 'd-flex align-items-center justify-content-between flex-wrap gap-2 mb-3';
-
-                var titleBox = document.createElement('div');
-                var title = document.createElement('h2');
-                title.className = 'h5 fw-bold mb-1';
-                title.textContent = answer.title || '질의 응답'; // ✅ 백엔드가 제공한 제목을 그대로 사용합니다.
-                var cacheInfo = document.createElement('small');
-                cacheInfo.className = 'text-muted';
-                cacheInfo.textContent = answer.fromCache ? '캐시에서 제공된 답변입니다.' : '실시간으로 생성된 답변입니다.'; // ✅ 캐시 여부를 그대로 노출합니다.
-                titleBox.appendChild(title);
-                titleBox.appendChild(cacheInfo);
-
-                var badgeBox = document.createElement('div');
-                badgeBox.className = 'd-flex align-items-center gap-2';
-                var scopeBadge = document.createElement('span');
-                scopeBadge.className = 'badge text-bg-info';
-                var currentTarget = questionForm.dataset.selectedUuid || questionForm.dataset.initialTarget || 'ALL';
-                scopeBadge.textContent = currentTarget === 'ALL' ? '전체 문서' : ('문서 UUID: ' + currentTarget); // ✅ 어떤 문서에 묻고 있는지 표시합니다.
-                badgeBox.appendChild(scopeBadge);
-                if (answer.fromCache) {
-                    var cacheBadge = document.createElement('span');
-                    cacheBadge.className = 'badge text-bg-secondary';
-                    cacheBadge.textContent = 'CACHE';
-                    badgeBox.appendChild(cacheBadge); // ✅ 캐시 응답일 때만 추가 배지를 붙입니다.
-                }
-
-                header.appendChild(titleBox);
-                header.appendChild(badgeBox);
-
-                var body = document.createElement('div');
-                body.className = 'mb-3';
-                var content = document.createElement('pre');
-                content.className = 'mb-0';
-                content.textContent = answer.answer || ''; // ✅ 본문 답변을 그대로 출력합니다.
-                body.appendChild(content);
-
-                wrapper.appendChild(header);
-                wrapper.appendChild(body);
-
-                if (Array.isArray(answer.sources) && answer.sources.length > 0) {
-                    var sourceBox = document.createElement('div');
-                    sourceBox.className = 'border-top pt-3';
-                    var sourceTitle = document.createElement('h3');
-                    sourceTitle.className = 'h6 fw-semibold mb-2';
-                    sourceTitle.textContent = '참고한 문서 근거';
-                    sourceBox.appendChild(sourceTitle);
-
-                    var sourceList = document.createElement('ul');
-                    sourceList.className = 'list-unstyled mb-0';
-
-                    answer.sources.forEach(function (source) {
-                        var item = document.createElement('li');
-                        item.className = 'mb-2';
-
-                        var headline = document.createElement('div');
-                        headline.className = 'fw-semibold';
-                        headline.textContent = source.reference || '';
-                        if (source.source) {
-                            var fileHint = document.createElement('span');
-                            fileHint.className = 'text-muted';
-                            fileHint.textContent = ' · ' + source.source;
-                            headline.appendChild(fileHint);
-                        }
-                        item.appendChild(headline);
-
-                        if (source.page !== null && source.page !== undefined) {
-                            var pageInfo = document.createElement('div');
-                            pageInfo.className = 'small text-muted';
-                            pageInfo.textContent = '페이지: ' + source.page;
-                            item.appendChild(pageInfo);
-                        }
-
-                        var preview = document.createElement('div');
-                        preview.className = 'small';
-                        preview.textContent = source.preview || '';
-                        item.appendChild(preview);
-
-                        sourceList.appendChild(item);
-                    });
-
-                    sourceBox.appendChild(sourceList);
-                    wrapper.appendChild(sourceBox);
-                }
-
-                chatFeed.insertBefore(wrapper, chatFeed.firstChild); // ✅ 최신 결과를 맨 위에서 바로 확인할 수 있도록 추가합니다.
-            }
-
-            function stopThinking(message) { // ✅ 사용자가 로딩 상태를 중단했을 때 UI를 정리합니다.
-                if (pendingController) {
-                    pendingController.abort();
-                    pendingController = null;
-                }
-                finishThinking(message);
-            }
-
-            function finishThinking(message) { // ✅ 정상 완료나 취소 시 공통 정리 루틴입니다.
-                if (delayTimer) {
-                    clearTimeout(delayTimer);
-                    delayTimer = null;
-                }
-                if (loadingOverlay) {
-                    loadingOverlay.classList.add('d-none');
-                }
-                if (submitButton) {
-                    submitButton.innerHTML = originalSubmitMarkup;
-                    submitButton.disabled = false;
-                }
-                if (liveStatusSection && liveStatusMessage && liveStatusSpinner) {
-                    liveStatusSection.classList.remove('d-none');
-                    liveStatusSpinner.classList.add('d-none');
-                    liveStatusTitle.textContent = '알림';
-                    liveStatusMessage.textContent = message || '처리가 완료되었습니다.';
-                }
-                if (liveStatusDelay) {
-                    liveStatusDelay.classList.add('d-none');
-                }
-                isThinking = false;
-            }
-
-            function resetThinkingUi() { // ✅ 페이지 복귀나 초기화 시 로딩 상태를 전부 해제합니다.
-                if (delayTimer) {
-                    clearTimeout(delayTimer);
-                    delayTimer = null;
-                }
-                if (pendingController) {
-                    pendingController.abort();
-                    pendingController = null;
-                }
-                if (loadingOverlay) {
-                    loadingOverlay.classList.add('d-none');
-                }
-                if (submitButton) {
-                    submitButton.innerHTML = originalSubmitMarkup;
-                    submitButton.disabled = false;
-                }
-                if (liveStatusSection) {
-                    liveStatusSection.classList.add('d-none');
-                }
-                if (liveStatusDelay) {
-                    liveStatusDelay.classList.add('d-none');
-                }
-                isThinking = false;
-            }
-        });                 
-    </script>
- </body>
- </html>
+</body>
+</html>
