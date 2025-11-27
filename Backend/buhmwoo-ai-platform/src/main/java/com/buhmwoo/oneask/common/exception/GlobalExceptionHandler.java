@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.BindException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
@@ -143,7 +144,10 @@ public class GlobalExceptionHandler {
                                                                           HttpServletRequest req) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("method", ex.getMethod());
-        details.put("supported", ex.getSupportedHttpMethods());
+        // 지원 메서드 집합을 문자열 리스트로 변환하여 직렬화 오류를 방지
+        details.put("supported", Optional.ofNullable(ex.getSupportedHttpMethods())
+                .map(methods -> methods.stream().map(HttpMethod::name).toList())
+                .orElse(null));
         log.debug("[METHOD-NOT-SUPPORTED] {} - {}", req.getRequestURI(), details);
         return buildError(HttpStatus.METHOD_NOT_ALLOWED, ErrorCode.BAD_REQUEST, ex.getMessage(), req, details);
     }

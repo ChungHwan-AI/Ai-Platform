@@ -52,6 +52,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.*;
+import java.net.SocketTimeoutException; // ✅ 네트워크 타임아웃 예외를 감지하기 위해 추가 임포트합니다.
+import java.util.concurrent.TimeoutException; // ✅ Reactor 블록 대기 초과 상황을 식별하기 위해 추가 임포트합니다.
 
 /**
  * 업로드 → 디스크 저장 → DB기록 → (선택) RAG 인덱싱 트리거
@@ -264,6 +266,13 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             return ApiResponseDto.ok(fallback, "응답 성공(fallback)");
 
         } catch (Exception e) {
+            if (isTimeoutException(e)) { // ✅ 타임아웃 시에는 실패 대신 안내 메시지와 임시 답변을 제공합니다.
+                log.warn("[ASK][TIMEOUT] 응답 지연으로 임시 답변을 반환합니다: {}", e.getMessage()); // ✅ 운영 로그에 타임아웃 사실을 기록합니다.
+                QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(question, mode); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
+                questionAnswerCache.put(docId, question, mode, timeoutAnswer); // ✅ 동일 질문 재시도 시 즉시 안내하도록 캐싱합니다.
+                return ApiResponseDto.ok(timeoutAnswer, "응답 지연: 임시 답변을 제공합니다."); // ✅ 사용자에게 성공 상태로 전달해 UX 저하를 완화합니다.
+            }
+
             log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
             return ApiResponseDto.fail("질의 실패: " + e.getMessage());
         }
@@ -315,6 +324,28 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of()))
                 .answer(hybridMessage)
+                .sources(List.of())
+                .fromCache(false)
+                .build();
+    }
+
+    private QuestionAnswerResponseDto buildTimeoutFallback(String question, BotMode mode) { // ✅ RAG 백엔드 지연 시 사용자에게 전달할 임시 답변을 생성합니다.
+        String guidance = "현재 답변이 지연되고 있어요. 잠시 후 다시 시도해 주세요."; // ✅ 지연 상황을 즉시 안내합니다.
+        if (mode == BotMode.STRICT) { // ✅ STRICT 모드에서는 문서 검색 실패 메시지와 함께 지연 안내를 제공합니다.
+            return QuestionAnswerResponseDto.builder()
+                    .title(buildAnswerTitle(question, List.of()))
+                    .answer(guidance + "\n지금은 문서 검색이 원활하지 않아 임시 안내만 드려요.")
+                    .sources(List.of())
+                    .fromCache(false)
+                    .build();
+        }
+
+        String generalAnswer = generateGeneralKnowledgeAnswer(question); // ✅ HYBRID 모드에서는 일반 지식 기반 임시 답변을 함께 제공합니다.
+        String combined = guidance + "\n\n[임시 답변] " + generalAnswer; // ✅ 안내 문구와 임시 답변을 묶어 전달합니다.
+
+        return QuestionAnswerResponseDto.builder()
+                .title(buildAnswerTitle(question, List.of()))
+                .answer(combined)
                 .sources(List.of())
                 .fromCache(false)
                 .build();
@@ -401,7 +432,22 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             return "지금은 일반 지식 답변을 준비하는 데 시간이 너무 오래 걸리고 있어요. 잠시 후 다시 시도해 주세요."; // ✅ 실패 시에도 즉시 안내 메시지를 반환합니다.
         }
     }
-    
+
+    private boolean isTimeoutException(Throwable e) { // ✅ 예외 체인에서 타임아웃 계열 오류를 탐지하기 위한 헬퍼입니다.
+        Throwable cursor = e; // ✅ 현재 탐색 중인 예외를 저장합니다.
+        while (cursor != null) { // ✅ 원인 예외 체인을 모두 확인합니다.
+            if (cursor instanceof TimeoutException || cursor instanceof SocketTimeoutException) { // ✅ 명시적인 타임아웃 유형을 우선 식별합니다.
+                return true; // ✅ 타임아웃이 감지되면 즉시 true 를 반환합니다.
+            }
+            String message = cursor.getMessage(); // ✅ 예외 메시지에 타임아웃 단서가 있는지 확인합니다.
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("timeout")) { // ✅ 네트워크 스택에서 전달한 메시지도 인식합니다.
+                return true; // ✅ 메시지 기반으로도 타임아웃을 감지합니다.
+            }
+            cursor = cursor.getCause(); // ✅ 더 깊은 원인 예외로 이동합니다.
+        }
+        return false; // ✅ 어떤 조건도 만족하지 않으면 타임아웃이 아님을 반환합니다.
+    }
+        
     /**
      * 질문 내용과 대표 출처를 활용해 앱 카드 상단에 노출할 제목을 생성합니다. // ✅ 응답 가독성을 높이기 위한 헬퍼 메서드임을 설명합니다.
      */
