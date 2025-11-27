@@ -321,17 +321,17 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     private QuestionAnswerResponseDto buildSmallTalkAnswer(String question) { // ✅ 일상 대화형 질문에 즉시 응답하기 위한 헬퍼입니다.
         String normalized = question == null ? "" : question.toLowerCase(Locale.ROOT); // ✅ 키워드 매칭을 위해 소문자로 변환합니다.
 
-        String message; // ✅ 반환할 응답 본문을 준비할 변수를 선언합니다.
-        if (normalized.contains("날씨")) { // ✅ 실시간 정보 요청을 감지합니다.
-            message = "실시간 날씨 데이터에는 접근할 수 없어요.\n현재 위치의 날씨는 기상청, 포털, 날씨 앱에서 확인해 주세요.";
-        } else if (normalized.contains("안녕") || normalized.contains("hello") || normalized.contains("hi")) { // ✅ 인사말을 포착합니다.
-            message = "안녕하세요! 필요한 내용을 질문해 주시면 빠르게 도와드릴게요.";
-        } else if (normalized.contains("고마워") || normalized.contains("thank")) { // ✅ 감사 표현에 대응합니다.
-            message = "도움이 되었다니 다행이에요. 더 궁금한 점이 있으면 언제든 말씀해 주세요!";
-        } else { // ✅ 기타 일상 질문에 대한 일반 응답입니다.
-            message = "현재는 등록된 문서와 직접 관련이 없는 질문이네요.\n그래도 일반적인 궁금증이라면 언제든 편하게 물어봐 주세요.";
+        String baseContext = "(일상 대화) 친근하고 자연스러운 ChatGPT 스타일로 2~3문장 이내로 답변하세요. 질문 언어(한국어/영어)를 따라가고, 맥락을 추론해 추가로 궁금해할만한 정보나 짧은 팁을 덧붙이세요. 불필요한 사과보다는 명확하고 위트 있는 표현을 선택합니다."; // ✅ 전반적인 일상 대화 품질을 ChatGPT 수준으로 끌어올리기 위한 기본 컨텍스트입니다.
+        if (normalized.contains("날씨")) { // ✅ 날씨 질문일 때는 실시간처럼 느껴지도록 맥락형 안내를 강화합니다.
+            baseContext += " 실시간 관측 데이터에는 직접 접근하지 못하지만, 질문에 포함된 위치·날짜·시간 단서를 활용해 예상 가능한 기온 흐름·강수 가능성·준비물 팁(우산, 겉옷 등)을 간단히 제시하고, 마지막에 최신 정보 확인이 필요하다는 점을 짧게 고지합니다."; // ✅ 실시간 한계를 최소한으로 언급하면서도 실질적인 조언을 함께 제공합니다.
         }
 
+        GptResponse response = gptClient.generate(new GptRequest(question, baseContext)); // ✅ GPT를 호출해 ChatGPT 수준의 자연스러운 답변을 생성합니다.
+        String message = Optional.ofNullable(response) // ✅ GPT 응답 객체가 null 인 상황까지 방어합니다.
+                .map(GptResponse::answer)
+                .filter(answer -> !answer.isBlank())
+                .orElse("지금은 즉시 답변을 만들지 못했어요. 다시 한번 물어봐 주실래요?"); // ✅ GPT가 응답하지 못한 경우 대비용 안내 문구입니다.
+                        
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of())) // ✅ 기존 제목 생성 규칙을 재사용합니다.
                 .answer(message) // ✅ 준비한 메시지를 본문에 담습니다.

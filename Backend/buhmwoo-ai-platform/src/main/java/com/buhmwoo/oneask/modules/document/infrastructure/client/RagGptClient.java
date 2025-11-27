@@ -10,6 +10,7 @@ import org.springframework.web.reactive.function.client.WebClient; // ✅ HTTP �
 import reactor.core.publisher.Mono; // ✅ 논블로킹 응답을 처리하기 위해 Mono를 임포트합니다.
 
 import java.time.Duration; // ✅ 응답 대기 시간 상한을 설정하기 위해 Duration을 임포트합니다.
+import java.util.concurrent.TimeoutException; // ✅ 블로킹 호출의 시간 초과 여부를 식별하기 위해 TimeoutException을 임포트합니다.
 
 /**
  * 검색된 컨텍스트를 전달해 RAG 백엔드가 제공하는 GPT 엔드포인트를 호출합니다. // ✅ 답변 생성 단계를 별도 모듈로 분리했음을 설명합니다.
@@ -17,7 +18,7 @@ import java.time.Duration; // ✅ 응답 대기 시간 상한을 설정하기 �
 @Component // ✅ 자동 주입을 위해 컴포넌트로 선언합니다.
 public class RagGptClient implements GptClient {
 
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값입니다.
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값입니다.
 
     private final OneAskProperties props; // ✅ 백엔드 URL을 주입받기 위한 필드입니다.
     private final WebClient ragWebClient; // ✅ 실제 HTTP 호출을 수행할 WebClient입니다.
@@ -39,9 +40,18 @@ public class RagGptClient implements GptClient {
                 .contentType(MediaType.APPLICATION_JSON) // ✅ JSON 형태로 요청 본문을 보냅니다.
                 .bodyValue(request)
                 .retrieve()
-                .bodyToMono(GptResponsePayload.class); // ✅ 응답을 전용 DTO로 역직렬화합니다.
+                .bodyToMono(GptResponsePayload.class)
+                .timeout(REQUEST_TIMEOUT); // ✅ WebClient 레벨에서 타임아웃을 적용해 블로킹 호출 시 동일한 기준이 유지되도록 합니다.
 
-        GptResponsePayload payload = call.block(REQUEST_TIMEOUT); // ✅ 정해진 시간까지만 기다려 지연을 최소화합니다.
+        GptResponsePayload payload;
+        try {
+            payload = call.block(); // ✅ Reactive 파이프라인에 설정된 타임아웃을 존중하면서 응답을 동기적으로 대기합니다.
+        } catch (Exception e) {
+            if (isTimeout(e)) { // ✅ 타임아웃을 명확히 감지해 사용자 친화적인 안내를 제공합니다.
+                throw new IllegalStateException("GPT 응답 지연: 30초 이내에 결과를 받지 못했습니다. 잠시 후 다시 시도해 주세요.", e);
+            }
+            throw e; // ✅ 기타 예외는 기존 흐름을 유지해 상위에서 처리하도록 위임합니다.
+        }
         if (payload == null) {
             throw new IllegalStateException("GPT 응답이 비어 있습니다."); // ✅ 비정상 상황을 명확히 알립니다.
         }
@@ -51,6 +61,17 @@ public class RagGptClient implements GptClient {
         return new GptResponse(payload.answer()); // ✅ 상위 계층에서 동일한 타입을 사용하도록 변환합니다.
     }
 
+    private boolean isTimeout(Exception e) { // ✅ 중첩된 예외 체인에서도 시간 초과를 식별하기 위한 헬퍼 메서드입니다.
+        Throwable cursor = e; // ✅ 현재 확인 중인 예외를 저장합니다.
+        while (cursor != null) { // ✅ 원인 예외를 따라가며 TimeoutException을 찾습니다.
+            if (cursor instanceof TimeoutException) { // ✅ 명시적인 타임아웃 예외가 존재하는지 확인합니다.
+                return true; // ✅ 타임아웃이 감지되면 true를 반환합니다.
+            }
+            cursor = cursor.getCause(); // ✅ 더 깊은 원인 예외로 이동합니다.
+        }
+        return false; // ✅ 어떤 원인에서도 타임아웃이 발견되지 않은 경우 false를 반환합니다.
+    }
+    
     /**
      * /query/generate 응답 구조를 역직렬화하기 위한 내부 레코드입니다. // ✅ WebClient DTO 매핑을 단순화합니다.
      */
