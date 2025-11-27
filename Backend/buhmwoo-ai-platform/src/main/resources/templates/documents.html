@@ -529,7 +529,7 @@
         <!-- ✅ 기본 액션을 지정해 자바스크립트가 동작하지 않아도 전체 질의 엔드포인트로 전송되도록 합니다. -->            
             <form id="mainQuestionForm" class="question-form"
                   th:action="@{/documents/ask}"
-                  th:attr="data-ask-all=@{/documents/ask}, data-ask-base=@{/documents/}, data-initial-target=${askTarget != null ? askTarget : 'ALL'}"
+                  th:attr="data-ask-all=@{/api/documents/ask}, data-ask-base=@{/api/documents/}, data-initial-target=${askTarget != null ? askTarget : 'ALL'}" 
                   method="post">
                 <div class="question-target">
                     <span id="questionTargetLabel"
