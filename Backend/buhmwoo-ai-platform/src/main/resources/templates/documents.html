@@ -77,6 +77,29 @@
             padding: 1.75rem;
         }
 
+        /* ✅ 실시간 질문 진행 상황을 알려줄 상태 배지 스타일입니다. */
+        .live-status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.6rem 0.9rem;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.12);
+            color: #1d4ed8;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        /* ✅ 지연 안내 문구를 차분하게 보여주기 위한 스타일입니다. */
+        .delay-hint {
+            color: #475569;
+            background: rgba(248, 113, 113, 0.08);
+            border: 1px dashed rgba(248, 113, 113, 0.35);
+            border-radius: 0.85rem;
+            padding: 0.75rem 0.9rem;
+        }
+
+
                 /* ✅ 질문 전송 시 사용자에게 진행 상태를 안내하는 오버레이를 정의합니다. */
         .loading-overlay {
             position: fixed;
@@ -261,7 +284,19 @@
         <section th:if="${alertMessage}" class="chat-bubble">
             <!-- ✅ 알림 유형이 전달되지 않으면 info 스타일을 기본으로 적용합니다. -->
             <div th:class="${'alert alert-' + (#strings.isEmpty(alertType) ? 'info' : alertType) + ' mb-0'}" role="alert" th:text="${alertMessage}"></div>
-        </section>    
+        </section>
+
+        <!-- ✅ 실시간 질문 상태를 화면 상단에 바로 노출하기 위한 버블입니다. -->
+        <section id="liveQuestionStatus" class="chat-bubble d-none">
+            <div class="d-flex align-items-center gap-3 mb-2">
+                <div class="spinner-border text-primary" role="status" aria-hidden="true" id="liveQuestionSpinner"></div>
+                <div>
+                    <div class="live-status-chip" id="liveQuestionTitle">생각 중입니다</div>
+                    <div class="text-muted" id="liveQuestionMessage">지금 응답을 준비하고 있어요.</div>
+                </div>
+            </div>
+            <div class="delay-hint d-none" id="liveQuestionDelay">답변이 조금 지연되고 있습니다. 연결이 유지되도록 기다려 주세요.</div>
+        </section> 
 
         <!-- ✅ 업로드 결과가 있을 경우 상세 정보를 제공하는 버블을 추가합니다. -->
         <section th:if="${uploadResult}" class="chat-bubble">
@@ -539,7 +574,7 @@
 <div id="questionLoadingOverlay" class="loading-overlay d-none">
     <div class="loading-content">
         <div class="spinner-border text-light" role="status" aria-hidden="true"></div>
-        <p class="mt-3 mb-0 fw-semibold">생각 중입니다… 잠시만 기다려 주세요.</p>
+        <p class="mt-3 mb-0 fw-semibold" id="questionOverlayMessage">생각 중입니다… 잠시만 기다려 주세요.</p>
     </div>
 </div>
 
@@ -589,8 +624,9 @@
             var detailDescription = document.getElementById('detailDescription');
             var detailSize = document.getElementById('detailSize');
             var loadingOverlay = document.getElementById('questionLoadingOverlay'); // ✅ 질문 처리 중 진행 상태를 보여줄 오버레이 요소를 찾습니다.
+            var overlayMessage = document.getElementById('questionOverlayMessage'); // ✅ 지연 안내 문구를 실시간으로 갱신할 요소를 준비합니다.
             var submitButton = questionForm.querySelector('button[type="submit"]'); // ✅ 제출 버튼을 찾아 로딩 상태를 표시합니다.
-            var originalSubmitMarkup = submitButton ? submitButton.innerHTML : ''; // ✅ 로딩 이후 버튼 내용을 복원하기 위해 원본 HTML을 저장합니다.            
+            var originalSubmitMarkup = submitButton ? submitButton.innerHTML : ''; // ✅ 로딩 이후 버튼 내용을 복원하기 위해 원본 HTML을 저장합니다.
             var downloadLink = document.getElementById('documentDownloadLink');
             var deleteForm = document.getElementById('documentDeleteForm');
             var confirmButton = document.getElementById('applySelectedDocument'); // ✅ 사용자가 선택한 문서를 확정할 버튼을 가져옵니다.
@@ -601,6 +637,15 @@
 
             var selectedUuid = '';
             var selectedName = '';
+            var isThinking = false; // ✅ 현재 질문이 처리 중인지 여부를 추적합니다.
+            var delayTimer = null; // ✅ 일정 시간이 지나면 지연 안내를 노출하기 위한 타이머입니다.
+            var pendingController = null; // ✅ 사용자가 중간에 요청을 취소할 수 있도록 AbortController를 저장합니다.
+
+            var liveStatusSection = document.getElementById('liveQuestionStatus'); // ✅ 화면 상단에 실시간 상태를 보여줄 버블을 찾습니다.
+            var liveStatusTitle = document.getElementById('liveQuestionTitle');
+            var liveStatusMessage = document.getElementById('liveQuestionMessage');
+            var liveStatusDelay = document.getElementById('liveQuestionDelay');
+            var liveStatusSpinner = document.getElementById('liveQuestionSpinner');
 
             function setConfirmButtonState(isActive) { // ✅ 선택 상태에 따라 적용 버튼을 활성화하거나 비활성화하는 헬퍼입니다.
                 if (!confirmButton) {
@@ -769,30 +814,49 @@
             }
 
             // ✅ 폼 전송 시 선택 상태에 맞춰 요청 경로를 조정합니다.
-            questionForm.addEventListener('submit', function () {
-                if (loadingOverlay) {
-                    loadingOverlay.classList.remove('d-none'); // ✅ 제출 직후 오버레이를 띄워 사용자가 진행 상황을 확인하도록 합니다.
+            questionForm.addEventListener('submit', function (event) {
+                event.preventDefault(); // ✅ 페이지 전체 새로고침을 막고 비동기로 상태를 관리합니다.
+
+                var questionInput = document.getElementById('mainQuestionInput');
+                var modeInput = questionForm.querySelector('input[name="mode"]:checked');
+                var questionValue = questionInput ? questionInput.value.trim() : '';
+                var modeValue = modeInput ? modeInput.value : 'STRICT';
+
+                if (!questionValue) {
+                    alert('질문을 입력해주세요.'); // ✅ 빈 입력을 바로 안내해 잘못된 요청을 방지합니다.
+                    return;
                 }
-                if (submitButton) {
-                    submitButton.disabled = true; // ✅ 중복 클릭을 방지하기 위해 버튼을 잠금 처리합니다.
-                    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>생각 중…'; // ✅ 버튼에도 스피너를 추가해 즉각적인 피드백을 제공합니다.
-                }               
-                if (selectedUuid) {
-                    questionForm.action = (askBase || '/documents/') + selectedUuid + '/ask';
-                } else {
-                    questionForm.action = askAllUrl || '/documents/ask';
+                
+                if (isThinking) {
+                    stopThinking('생각을 중단했습니다. 새로 질문하려면 다시 눌러주세요.'); // ✅ 두 번째 클릭 시 진행 중인 요청을 취소합니다.
+                    return;                
                 }
+                var targetUrl = selectedUuid ? ((askBase || '/documents/') + selectedUuid + '/ask') : (askAllUrl || '/documents/ask');
+                var queryParams = new URLSearchParams({ question: questionValue, mode: modeValue });
+
+                startThinkingUi(); // ✅ 상태 버블, 버튼, 오버레이를 로딩 모드로 전환합니다.
+
+                pendingController = new AbortController();
+                fetch(targetUrl + '?' + queryParams.toString(), { // ✅ 백엔드가 제공하는 질의 API를 호출합니다.
+                    method: 'GET',
+                    signal: pendingController.signal
+                }).then(function (response) {
+                    if (!response.ok) {
+                        throw new Error('응답을 불러오지 못했습니다.'); // ✅ HTTP 오류를 잡아 사용자에게 안내합니다.
+                    }
+                    return response.json();
+                }).then(function (payload) {
+                    renderAnswerBubble(payload && payload.data ? payload.data : null); // ✅ 서버 응답을 화면 버블로 렌더링합니다.
+                    finishThinking('답변을 준비했습니다. 아래 결과를 확인하세요.'); // ✅ 정상 완료 시 상태를 해제합니다.
+                }).catch(function (error) {
+                    if (error.name === 'AbortError') {
+                        return; // ✅ 이미 stopThinking 에서 UI 를 정리했으므로 별도 처리가 필요 없습니다.
+                    }
+                    stopThinking('응답이 지연되거나 실패했습니다. 다시 시도해주세요.'); // ✅ 오류 시 상태를 해제하면서 안내합니다.
+                    console.error(error);
+                });                
             });
-            window.addEventListener('pageshow', function () {
-                if (loadingOverlay) {
-                    loadingOverlay.classList.add('d-none'); // ✅ 페이지가 다시 나타날 때 오버레이를 감춰 다음 상호작용을 준비합니다.
-                }
-                if (submitButton) {
-                    submitButton.disabled = false; // ✅ 새 페이지로 돌아왔을 때 버튼을 다시 사용할 수 있게 합니다.
-                    submitButton.innerHTML = originalSubmitMarkup; // ✅ 버튼 레이블을 초기 상태로 복원해 일관된 UI를 유지합니다.
-                }
-            });            
-        });
+
             if (!shouldAutoOpenModal && searchModalElement) {
                 searchModalElement.addEventListener('shown.bs.modal', function () {
                     var searchField = document.getElementById('searchFileName');
@@ -800,7 +864,211 @@
                         searchField.focus(); // ✅ 수동으로 모달을 열었을 때도 검색 필드를 자동 포커싱해 입력 편의성을 높입니다.
                     }
                 });
-            }        
+            }
+
+            window.addEventListener('pageshow', function () {
+                // ✅ 히스토리 이동 시 잔여 로딩 상태를 안전하게 초기화합니다.
+                resetThinkingUi();
+            });
+
+            function startThinkingUi() { // ✅ 질문 시작 시 UI를 로딩 모드로 전환하는 헬퍼입니다.
+                isThinking = true;
+                if (loadingOverlay) {
+                    loadingOverlay.classList.remove('d-none');
+                }
+                if (overlayMessage) {
+                    overlayMessage.textContent = '생각 중입니다… 곧 답변을 받을 수 있어요.';
+                }
+                if (submitButton) {
+                    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>생각 중… (다시 누르면 중단)';
+                    submitButton.disabled = false; // ✅ 중단 기능을 제공하기 위해 비활성화하지 않습니다.
+                }
+                if (liveStatusSection && liveStatusTitle && liveStatusMessage && liveStatusSpinner) {
+                    liveStatusSection.classList.remove('d-none');
+                    liveStatusSpinner.classList.remove('d-none');
+                    liveStatusTitle.textContent = '생각 중입니다';
+                    liveStatusMessage.textContent = '현재 응답을 요약하고 있어요. 잠시만 기다려 주세요.';
+                }
+                if (liveStatusDelay) {
+                    liveStatusDelay.classList.add('d-none');
+                }
+                if (delayTimer) {
+                    clearTimeout(delayTimer);
+                }
+                delayTimer = setTimeout(function () {
+                    if (!isThinking) {
+                        return; // ✅ 이미 완료되었다면 지연 안내를 건너뜁니다.
+                    }
+                    if (overlayMessage) {
+                        overlayMessage.textContent = '답변이 지연되고 있습니다. 연결을 유지하고 있어요.';
+                    }
+                    if (liveStatusDelay) {
+                        liveStatusDelay.classList.remove('d-none');
+                    }
+                    if (liveStatusTitle) {
+                        liveStatusTitle.textContent = '조금만 더 기다려 주세요';
+                    }
+                }, 6000);
+            }
+
+            function renderAnswerBubble(answer) { // ✅ 서버가 돌려준 응답을 채팅 버블 형태로 생성합니다.
+                if (!answer) {
+                    return;
+                }
+
+                var chatFeed = document.querySelector('.chat-feed');
+                if (!chatFeed) {
+                    return;
+                }
+
+                var wrapper = document.createElement('section');
+                wrapper.className = 'chat-bubble';
+
+                var header = document.createElement('div');
+                header.className = 'd-flex align-items-center justify-content-between flex-wrap gap-2 mb-3';
+
+                var titleBox = document.createElement('div');
+                var title = document.createElement('h2');
+                title.className = 'h5 fw-bold mb-1';
+                title.textContent = answer.title || '질의 응답'; // ✅ 백엔드가 제공한 제목을 그대로 사용합니다.
+                var cacheInfo = document.createElement('small');
+                cacheInfo.className = 'text-muted';
+                cacheInfo.textContent = answer.fromCache ? '캐시에서 제공된 답변입니다.' : '실시간으로 생성된 답변입니다.'; // ✅ 캐시 여부를 그대로 노출합니다.
+                titleBox.appendChild(title);
+                titleBox.appendChild(cacheInfo);
+
+                var badgeBox = document.createElement('div');
+                badgeBox.className = 'd-flex align-items-center gap-2';
+                var scopeBadge = document.createElement('span');
+                scopeBadge.className = 'badge text-bg-info';
+                var currentTarget = questionForm.dataset.selectedUuid || questionForm.dataset.initialTarget || 'ALL';
+                scopeBadge.textContent = currentTarget === 'ALL' ? '전체 문서' : ('문서 UUID: ' + currentTarget); // ✅ 어떤 문서에 묻고 있는지 표시합니다.
+                badgeBox.appendChild(scopeBadge);
+                if (answer.fromCache) {
+                    var cacheBadge = document.createElement('span');
+                    cacheBadge.className = 'badge text-bg-secondary';
+                    cacheBadge.textContent = 'CACHE';
+                    badgeBox.appendChild(cacheBadge); // ✅ 캐시 응답일 때만 추가 배지를 붙입니다.
+                }
+
+                header.appendChild(titleBox);
+                header.appendChild(badgeBox);
+
+                var body = document.createElement('div');
+                body.className = 'mb-3';
+                var content = document.createElement('pre');
+                content.className = 'mb-0';
+                content.textContent = answer.answer || ''; // ✅ 본문 답변을 그대로 출력합니다.
+                body.appendChild(content);
+
+                wrapper.appendChild(header);
+                wrapper.appendChild(body);
+
+                if (Array.isArray(answer.sources) && answer.sources.length > 0) {
+                    var sourceBox = document.createElement('div');
+                    sourceBox.className = 'border-top pt-3';
+                    var sourceTitle = document.createElement('h3');
+                    sourceTitle.className = 'h6 fw-semibold mb-2';
+                    sourceTitle.textContent = '참고한 문서 근거';
+                    sourceBox.appendChild(sourceTitle);
+
+                    var sourceList = document.createElement('ul');
+                    sourceList.className = 'list-unstyled mb-0';
+
+                    answer.sources.forEach(function (source) {
+                        var item = document.createElement('li');
+                        item.className = 'mb-2';
+
+                        var headline = document.createElement('div');
+                        headline.className = 'fw-semibold';
+                        headline.textContent = source.reference || '';
+                        if (source.source) {
+                            var fileHint = document.createElement('span');
+                            fileHint.className = 'text-muted';
+                            fileHint.textContent = ' · ' + source.source;
+                            headline.appendChild(fileHint);
+                        }
+                        item.appendChild(headline);
+
+                        if (source.page !== null && source.page !== undefined) {
+                            var pageInfo = document.createElement('div');
+                            pageInfo.className = 'small text-muted';
+                            pageInfo.textContent = '페이지: ' + source.page;
+                            item.appendChild(pageInfo);
+                        }
+
+                        var preview = document.createElement('div');
+                        preview.className = 'small';
+                        preview.textContent = source.preview || '';
+                        item.appendChild(preview);
+
+                        sourceList.appendChild(item);
+                    });
+
+                    sourceBox.appendChild(sourceList);
+                    wrapper.appendChild(sourceBox);
+                }
+
+                chatFeed.insertBefore(wrapper, chatFeed.firstChild); // ✅ 최신 결과를 맨 위에서 바로 확인할 수 있도록 추가합니다.
+            }
+
+            function stopThinking(message) { // ✅ 사용자가 로딩 상태를 중단했을 때 UI를 정리합니다.
+                if (pendingController) {
+                    pendingController.abort();
+                    pendingController = null;
+                }
+                finishThinking(message);
+            }
+
+            function finishThinking(message) { // ✅ 정상 완료나 취소 시 공통 정리 루틴입니다.
+                if (delayTimer) {
+                    clearTimeout(delayTimer);
+                    delayTimer = null;
+                }
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('d-none');
+                }
+                if (submitButton) {
+                    submitButton.innerHTML = originalSubmitMarkup;
+                    submitButton.disabled = false;
+                }
+                if (liveStatusSection && liveStatusMessage && liveStatusSpinner) {
+                    liveStatusSection.classList.remove('d-none');
+                    liveStatusSpinner.classList.add('d-none');
+                    liveStatusTitle.textContent = '알림';
+                    liveStatusMessage.textContent = message || '처리가 완료되었습니다.';
+                }
+                if (liveStatusDelay) {
+                    liveStatusDelay.classList.add('d-none');
+                }
+                isThinking = false;
+            }
+
+            function resetThinkingUi() { // ✅ 페이지 복귀나 초기화 시 로딩 상태를 전부 해제합니다.
+                if (delayTimer) {
+                    clearTimeout(delayTimer);
+                    delayTimer = null;
+                }
+                if (pendingController) {
+                    pendingController.abort();
+                    pendingController = null;
+                }
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('d-none');
+                }
+                if (submitButton) {
+                    submitButton.innerHTML = originalSubmitMarkup;
+                    submitButton.disabled = false;
+                }
+                if (liveStatusSection) {
+                    liveStatusSection.classList.add('d-none');
+                }
+                if (liveStatusDelay) {
+                    liveStatusDelay.classList.add('d-none');
+                }
+                isThinking = false;
+            }
+        });                 
     </script>
  </body>
  </html>
