@@ -231,6 +231,12 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
         String docId = StringUtils.hasText(uuid) ? uuid : null; // ✅ 문서 ID가 비어 있으면 전체 검색으로 전환합니다.
         try {
+            if (mode != BotMode.STRICT && isGeneralSmallTalk(question)) { // ✅ 하이브리드 계열에서는 일상 질문을 빠르게 처리합니다.
+                QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(question); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
+                questionAnswerCache.put(docId, question, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
+                return ApiResponseDto.ok(smallTalk, "응답 성공(일상 질문)"); // ✅ RAG 호출을 생략한 빠른 응답임을 설명합니다.
+            }
+
             Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, question, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
             if (cached.isPresent()) {
                 return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
@@ -312,6 +318,41 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 .build();
     }
 
+    private QuestionAnswerResponseDto buildSmallTalkAnswer(String question) { // ✅ 일상 대화형 질문에 즉시 응답하기 위한 헬퍼입니다.
+        String normalized = question == null ? "" : question.toLowerCase(Locale.ROOT); // ✅ 키워드 매칭을 위해 소문자로 변환합니다.
+
+        String message; // ✅ 반환할 응답 본문을 준비할 변수를 선언합니다.
+        if (normalized.contains("날씨")) { // ✅ 실시간 정보 요청을 감지합니다.
+            message = "실시간 날씨 데이터에는 접근할 수 없어요.\n현재 위치의 날씨는 기상청, 포털, 날씨 앱에서 확인해 주세요.";
+        } else if (normalized.contains("안녕") || normalized.contains("hello") || normalized.contains("hi")) { // ✅ 인사말을 포착합니다.
+            message = "안녕하세요! 필요한 내용을 질문해 주시면 빠르게 도와드릴게요.";
+        } else if (normalized.contains("고마워") || normalized.contains("thank")) { // ✅ 감사 표현에 대응합니다.
+            message = "도움이 되었다니 다행이에요. 더 궁금한 점이 있으면 언제든 말씀해 주세요!";
+        } else { // ✅ 기타 일상 질문에 대한 일반 응답입니다.
+            message = "현재는 등록된 문서와 직접 관련이 없는 질문이네요.\n그래도 일반적인 궁금증이라면 언제든 편하게 물어봐 주세요.";
+        }
+
+        return QuestionAnswerResponseDto.builder()
+                .title(buildAnswerTitle(question, List.of())) // ✅ 기존 제목 생성 규칙을 재사용합니다.
+                .answer(message) // ✅ 준비한 메시지를 본문에 담습니다.
+                .sources(List.of()) // ✅ 문서 기반이 아니므로 출처는 비워둡니다.
+                .fromCache(false) // ✅ 캐시 여부는 호출부에서 처리하도록 기본값을 둡니다.
+                .build();
+    }
+
+    private boolean isGeneralSmallTalk(String question) { // ✅ RAG 없이 처리할 수 있는 일상 질문 여부를 판별합니다.
+        if (question == null) {
+            return false; // ✅ 질문이 없으면 일상 질문으로 보지 않습니다.
+        }
+        String normalized = question.toLowerCase(Locale.ROOT); // ✅ 키워드 매칭을 위해 소문자로 정규화합니다.
+        return normalized.contains("날씨")
+                || normalized.contains("안녕")
+                || normalized.contains("hello")
+                || normalized.contains("hi")
+                || normalized.contains("고마워")
+                || normalized.contains("thank"); // ✅ 대표적인 일상 키워드를 나열해 빠른 분기를 만듭니다.
+    }
+        
     private Double extractScore(RetrievedDocumentChunk chunk) {
         Map<String, Object> metadata = chunk.metadata(); // ✅ 검색 결과 메타데이터에서 점수를 찾아봅니다.
         if (metadata == null) {

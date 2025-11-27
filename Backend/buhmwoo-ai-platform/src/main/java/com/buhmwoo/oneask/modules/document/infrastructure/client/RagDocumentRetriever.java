@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component; // ✅ 스프링 빈으로 등�
 import org.springframework.web.reactive.function.client.WebClient; // ✅ RAG 백엔드 HTTP 호출에 사용할 WebClient를 임포트합니다.
 import reactor.core.publisher.Mono; // ✅ WebClient 응답을 안전하게 처리하기 위해 Mono를 임포트합니다.
 
+import java.time.Duration; // ✅ 검색 호출에 대한 최대 대기 시간을 정의하기 위해 Duration을 임포트합니다.
+
 import java.util.List; // ✅ 검색 결과를 리스트 형태로 다루기 위해 임포트합니다.
 import java.util.Map; // ✅ 요청 본문 생성을 위해 Map을 임포트합니다.
 
@@ -19,6 +21,7 @@ import java.util.Map; // ✅ 요청 본문 생성을 위해 Map을 임포트합�
 @Component // ✅ 자동 주입을 위해 컴포넌트로 등록합니다.
 public class RagDocumentRetriever implements DocumentRetriever {
 
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15); // ✅ 검색 응답 지연을 줄이기 위한 타임아웃 값입니다.
     private final OneAskProperties props; // ✅ 구성 파일에서 주입한 RAG 백엔드 URL을 보관합니다.
     private final WebClient ragWebClient; // ✅ HTTP 통신을 담당할 WebClient 인스턴스를 보관합니다.
 
@@ -46,7 +49,7 @@ public class RagDocumentRetriever implements DocumentRetriever {
                 .retrieve()
                 .bodyToMono(RetrieveResponsePayload.class); // ✅ 응답을 DTO로 역직렬화합니다.
 
-        RetrieveResponsePayload payload = call.block(); // ✅ 동기 방식으로 결과를 대기합니다.
+        RetrieveResponsePayload payload = call.block(REQUEST_TIMEOUT); // ✅ 제한된 시간 동안만 대기해 전체 응답 속도를 개선합니다.
         if (payload == null) {
             throw new IllegalStateException("RAG 검색 응답이 비어 있습니다."); // ✅ 예외 상황을 명시적으로 알립니다.
         }

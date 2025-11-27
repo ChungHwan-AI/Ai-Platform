@@ -9,11 +9,15 @@ import org.springframework.stereotype.Component; // ✅ 스프링 빈으로 등�
 import org.springframework.web.reactive.function.client.WebClient; // ✅ HTTP 호출을 수행하기 위해 WebClient를 임포트합니다.
 import reactor.core.publisher.Mono; // ✅ 논블로킹 응답을 처리하기 위해 Mono를 임포트합니다.
 
+import java.time.Duration; // ✅ 응답 대기 시간 상한을 설정하기 위해 Duration을 임포트합니다.
+
 /**
  * 검색된 컨텍스트를 전달해 RAG 백엔드가 제공하는 GPT 엔드포인트를 호출합니다. // ✅ 답변 생성 단계를 별도 모듈로 분리했음을 설명합니다.
  */
 @Component // ✅ 자동 주입을 위해 컴포넌트로 선언합니다.
 public class RagGptClient implements GptClient {
+
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값입니다.
 
     private final OneAskProperties props; // ✅ 백엔드 URL을 주입받기 위한 필드입니다.
     private final WebClient ragWebClient; // ✅ 실제 HTTP 호출을 수행할 WebClient입니다.
@@ -37,7 +41,7 @@ public class RagGptClient implements GptClient {
                 .retrieve()
                 .bodyToMono(GptResponsePayload.class); // ✅ 응답을 전용 DTO로 역직렬화합니다.
 
-        GptResponsePayload payload = call.block(); // ✅ 동기적으로 결과를 기다립니다.
+        GptResponsePayload payload = call.block(REQUEST_TIMEOUT); // ✅ 정해진 시간까지만 기다려 지연을 최소화합니다.
         if (payload == null) {
             throw new IllegalStateException("GPT 응답이 비어 있습니다."); // ✅ 비정상 상황을 명확히 알립니다.
         }
