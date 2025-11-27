@@ -10,6 +10,8 @@
         .card { border: 1px solid #e2e8f0; border-radius: 14px; }
         .shadow-soft { box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07); }
         .doc-row-active { background: #eef2ff; outline: 2px solid #4f46e5; outline-offset: -1px; }
+        /* ✅ 질문 전송 시 사용자에게 생각 중임을 알려주는 레이어 스타일입니다. */
+        .thinking-indicator { background: rgba(248, 250, 252, 0.85); border: 1px dashed #6366f1; }        
     </style>
 </head>
 <body>
@@ -32,47 +34,33 @@
          th:classappend="${'alert-' + (#strings.isEmpty(alertType) ? 'info' : alertType)}"
          role="alert" th:text="${alertMessage}"></div>
 
-    <!-- 최근 질문과 응답을 알림 영역 바로 아래에 배치해 사용자가 즉시 확인할 수 있도록 합니다. -->
-    <div class="card shadow-soft mb-4" th:if="${askResult}">
+    <!-- ✅ 최신 응답과 과거 응답을 모두 보여주는 히스토리 카드입니다. -->
+    <div class="card shadow-soft mb-4">
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-start mb-3">
                 <div>
-                    <h3 class="h6 mb-1" th:text="${askResult.title ?: '질문 응답'}">질문 응답</h3>
-                    <div class="small text-muted" th:text="${askResult.fromCache} ? '캐시 응답' : '실시간 응답'"></div>
+                    <h3 class="h6 mb-1">질문/답변 히스토리</h3>
+                    <div class="small text-muted">최근 응답을 포함해 이전 대화도 한눈에 확인하세요.</div>
                 </div>
                 <div class="text-end">
-                    <span class="badge text-bg-info"
-                          th:text="${askTarget == 'ALL' ? '전체 문서' : '문서 UUID: ' + askTarget}"></span>
+                    <span class="badge text-bg-light">실시간 업데이트</span>
                 </div>
             </div>
-
-            <div class="mb-2">
-                <div class="fw-semibold small text-muted">나의 질문</div>
-                <div class="border rounded px-3 py-2 bg-light" th:text="${askQuestion}"></div>
-            </div>
-
-            <div class="mb-3">
-                <div class="fw-semibold small text-muted">응답</div>
-                <pre class="mb-0" th:text="${askResult.answer}"></pre>
-            </div>
-
-            <div th:if="${askResult.sources}" class="border-top pt-3">
-                <h4 class="h6 fw-semibold mb-2">참고 문서</h4>
-                <ul class="mb-0 ps-3">
-                    <li th:each="source : ${askResult.sources}" class="mb-2">
-                        <div class="fw-semibold">
-                            <span th:text="${source.reference}"></span>
-                            <span class="text-muted"
-                                  th:if="${source.source}" th:text="${' · ' + source.source}"></span>
-                        </div>
-                        <div class="small text-muted" th:if="${source.page != null}" th:text="${'페이지: ' + source.page}"></div>
-                        <div class="small" th:text="${source.preview}"></div>
-                    </li>
-                </ul>
-            </div>
+            <p id="historyEmptyMessage" class="text-muted mb-0">아직 받은 답변이 없습니다. 질문을 보내면 여기에 누적됩니다.</p>
+            <div id="answerHistoryList" class="d-flex flex-column gap-3"></div>
         </div>
     </div>
              
+    <!-- ✅ 서버에서 전달된 최신 응답을 JS 히스토리에 반영하기 위한 데이터 홀더입니다. -->
+    <div id="latestAnswerData" class="d-none"
+         th:if="${askResult}"
+         th:data-question="${askQuestion}"
+         th:data-answer="${askResult.answer}"
+         th:data-title="${askResult.title ?: '질문 응답'}"
+         th:data-target="${askTarget}"
+         th:data-mode="${askMode}"
+         th:data-from-cache="${askResult.fromCache}"></div>
+
     <div class="row g-4">
         <div class="col-lg-8">
 
@@ -108,6 +96,16 @@
                             <div class="form-check form-check-inline">
                                 <input class="form-check-input" type="radio" name="mode" id="modeHybrid" value="HYBRID">
                                 <label class="form-check-label" for="modeHybrid">하이브리드</label>
+                            </div>
+                        </div>
+
+                        <!-- ✅ 질문 전송 시 생각 중임을 알려주는 인디케이터입니다. -->
+                        <div id="thinkingIndicator"
+                             class="alert thinking-indicator d-none d-flex align-items-center gap-3 py-3">
+                            <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+                            <div>
+                                <div class="fw-semibold mb-0">생각 중이에요...</div>
+                                <small class="text-muted">최대 60초 동안 답변을 준비합니다. 잠시만 기다려 주세요.</small>
                             </div>
                         </div>
 
@@ -389,6 +387,7 @@
 <script>
     var selectedDocument = null;
 
+    // ✅ 질문 대상 배지를 최신 상태로 유지합니다.
     function updateQuestionAction() {
         var form = document.getElementById('questionForm');
         if (!form) return;
@@ -404,6 +403,7 @@
         }
     }
 
+     // ✅ 서버에서 전달된 모드를 다시 선택해 사용자가 선택 값을 유지합니다.
     function applyInitialMode() {
         var form = document.getElementById('questionForm');
         if (!form) return;
@@ -416,6 +416,7 @@
         if (target) target.checked = true;
     }
 
+    // ✅ 검색 테이블 행을 클릭했을 때 상세 정보를 패널과 버튼에 반영합니다.
     function bindRowSelection() {
         var rows = Array.from(document.querySelectorAll('[data-doc-uuid]'));
 
@@ -477,6 +478,7 @@
         });
     }
 
+    // ✅ 선택된 문서를 초기화해 전체 문서 대상으로 전환합니다.    
     function clearSelection() {
         selectedDocument = null;
 
@@ -503,6 +505,153 @@
         updateQuestionAction();
     }
 
+    // ✅ 히스토리를 로컬 스토리지에서 불러옵니다.
+    function loadHistory() {
+        try {
+            var stored = localStorage.getItem('oneaskAnswerHistory');
+            return stored ? JSON.parse(stored) : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    // ✅ 히스토리를 로컬 스토리지에 저장합니다.
+    function saveHistory(list) {
+        localStorage.setItem('oneaskAnswerHistory', JSON.stringify(list));
+    }
+
+    // ✅ 히스토리를 화면에 그려 사용자에게 이전 답변을 보여줍니다.
+    function renderHistory(list) {
+        var container = document.getElementById('answerHistoryList');
+        var emptyMessage = document.getElementById('historyEmptyMessage');
+
+        if (!container || !emptyMessage) return;
+
+        container.innerHTML = '';
+
+        if (!list || list.length === 0) {
+            emptyMessage.classList.remove('d-none');
+            return;
+        }
+
+        emptyMessage.classList.add('d-none');
+
+        list.forEach(function (item) {
+            var card = document.createElement('div');
+            card.className = 'border rounded p-3 bg-white';
+
+            var header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-start mb-2';
+
+            var titleWrap = document.createElement('div');
+            var title = document.createElement('div');
+            title.className = 'fw-semibold';
+            title.textContent = item.title || '질문 응답';
+
+            var meta = document.createElement('div');
+            meta.className = 'small text-muted';
+            meta.textContent = (item.fromCache ? '캐시 응답 · ' : '실시간 응답 · ') + (item.mode || 'STRICT');
+
+            titleWrap.appendChild(title);
+            titleWrap.appendChild(meta);
+
+            var badge = document.createElement('span');
+            badge.className = 'badge text-bg-info';
+            badge.textContent = item.target === 'ALL' || !item.target
+                ? '전체 문서'
+                : '문서 UUID: ' + item.target;
+
+            header.appendChild(titleWrap);
+            header.appendChild(badge);
+
+            var questionBlock = document.createElement('div');
+            questionBlock.className = 'mb-2';
+            var questionLabel = document.createElement('div');
+            questionLabel.className = 'fw-semibold small text-muted';
+            questionLabel.textContent = '나의 질문';
+            var questionBody = document.createElement('div');
+            questionBody.className = 'border rounded px-3 py-2 bg-light';
+            questionBody.textContent = item.question || '';
+            questionBlock.appendChild(questionLabel);
+            questionBlock.appendChild(questionBody);
+
+            var answerBlock = document.createElement('div');
+            var answerLabel = document.createElement('div');
+            answerLabel.className = 'fw-semibold small text-muted';
+            answerLabel.textContent = '응답';
+            var answerBody = document.createElement('pre');
+            answerBody.className = 'mb-0';
+            answerBody.textContent = item.answer || '';
+            answerBlock.appendChild(answerLabel);
+            answerBlock.appendChild(answerBody);
+
+            var timeRow = document.createElement('div');
+            timeRow.className = 'small text-muted mt-2';
+            timeRow.textContent = '응답 시간: ' + (item.answeredAt || '방금');
+
+            card.appendChild(header);
+            card.appendChild(questionBlock);
+            card.appendChild(answerBlock);
+            card.appendChild(timeRow);
+
+            container.appendChild(card);
+        });
+    }
+
+    // ✅ 서버 응답을 로컬 스토리지 히스토리에 누적합니다.
+    function mergeLatestAnswer() {
+        var latestEl = document.getElementById('latestAnswerData');
+        if (!latestEl) return;
+
+        var list = loadHistory();
+        list.unshift({
+            question: latestEl.dataset.question || '',
+            answer: latestEl.dataset.answer || '',
+            title: latestEl.dataset.title || '질문 응답',
+            target: latestEl.dataset.target || 'ALL',
+            mode: latestEl.dataset.mode || 'STRICT',
+            fromCache: latestEl.dataset.fromCache === 'true',
+            answeredAt: new Date().toLocaleString()
+        });
+
+        // 최대 10개까지만 유지해 화면이 과도하게 길어지지 않게 합니다.
+        if (list.length > 10) {
+            list = list.slice(0, 10);
+        }
+
+        saveHistory(list);
+    }
+
+    // ✅ 질문 전송 시 60초 동안 생각 중임을 알리는 인디케이터를 표시합니다.
+    function bindThinkingIndicator() {
+        var form = document.getElementById('questionForm');
+        var indicator = document.getElementById('thinkingIndicator');
+        var submitButton = form ? form.querySelector('button[type="submit"]') : null;
+
+        if (!form || !indicator) return;
+
+        form.addEventListener('submit', function () {
+            indicator.classList.remove('d-none');
+            if (submitButton) submitButton.disabled = true;
+
+            var messageEl = indicator.querySelector('small');
+            var elapsed = 0;
+
+            var timer = setInterval(function () {
+                elapsed += 1;
+                if (!messageEl) return;
+
+                if (elapsed < 60) {
+                    messageEl.textContent = '최대 60초 동안 답변을 준비합니다. 경과: ' + elapsed + '초';
+                } else {
+                    messageEl.textContent = '조금만 더 기다려 주세요. 현재도 생각 중입니다.';
+                }
+            }, 1000);
+
+            // 페이지가 이동하면 타이머가 자동으로 정리되므로 별도 종료 로직은 필요 없습니다.
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         var form = document.getElementById('questionForm');
         var initialTarget = form ? form.dataset.initialTarget : 'ALL';
@@ -514,7 +663,11 @@
         updateQuestionAction();
         applyInitialMode();
         bindRowSelection();
+        bindThinkingIndicator();
 
+        mergeLatestAnswer();
+        renderHistory(loadHistory());
+        
         var applyButton = document.getElementById('applySelectionButton');
         applyButton.addEventListener('click', function () {
             updateQuestionAction();
