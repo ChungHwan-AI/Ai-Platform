@@ -135,6 +135,7 @@ public class DocumentViewController {
         ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(uuid, question, mode); // ✅ 검색-생성 파이프라인을 선택한 모드에 맞춰 실행합니다.
         redirectAttributes.addFlashAttribute("alertMessage", response.getMessage()); // ✅ 질의 처리 메시지를 플래시로 보냅니다.
         redirectAttributes.addFlashAttribute("alertType", response.isSuccess() ? "info" : "danger"); // ✅ 질의 결과는 정보성 알림으로 표현합니다.
+        redirectAttributes.addFlashAttribute("askQuestion", question); // ✅ 사용자가 입력한 질문을 템플릿에 전달해 응답과 함께 표시합니다.
         redirectAttributes.addFlashAttribute("askResult", response.getData()); // ✅ 구조화된 응답 DTO를 뷰에서 활용할 수 있도록 전달합니다.
         redirectAttributes.addFlashAttribute("askTarget", uuid); // ✅ 어느 문서에 대한 질문인지 식별해 템플릿에서 강조합니다.
         redirectAttributes.addFlashAttribute("askMode", mode.name()); // ✅ 사용자가 선택한 모드가 화면에 다시 반영되도록 전달합니다.
@@ -161,6 +162,7 @@ public class DocumentViewController {
         ApiResponseDto<QuestionAnswerResponseDto> response = documentService.ask(null, question, mode); // ✅ 전체 문서를 대상으로 선택한 모드에 맞춘 파이프라인을 실행합니다.
         redirectAttributes.addFlashAttribute("alertMessage", response.getMessage()); // ✅ 파이프라인 결과 메시지를 사용자에게 보여줍니다.
         redirectAttributes.addFlashAttribute("alertType", response.isSuccess() ? "info" : "danger"); // ✅ 성공 시 정보 알림, 실패 시 경고 알림을 표시합니다.
+        redirectAttributes.addFlashAttribute("askQuestion", question); // ✅ 전체 질문 내용도 응답 카드에서 함께 보여주도록 플래시에 저장합니다.
         redirectAttributes.addFlashAttribute("askResult", response.getData()); // ✅ 구조화된 응답 본문을 화면에서 출력합니다.
         redirectAttributes.addFlashAttribute("askTarget", "ALL"); // ✅ 전체 질의임을 표시해 템플릿에서 구분합니다.
         redirectAttributes.addFlashAttribute("askMode", mode.name()); // ✅ 선택한 모드가 다음 화면에도 유지되도록 플래시에 저장합니다.
