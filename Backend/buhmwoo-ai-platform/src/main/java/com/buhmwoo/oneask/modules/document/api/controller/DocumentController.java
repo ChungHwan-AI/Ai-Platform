@@ -5,8 +5,10 @@ import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ GPT 응답 포맷을 재사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.api.dto.QuestionRequestDto; // ✅ POST 본문으로 질문을 받을 때 사용합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
 import com.buhmwoo.oneask.modules.document.application.question.BotMode; // ✅ fallback 모드 선택을 위해 Enum 을 컨트롤러에 노출합니다.
+import jakarta.validation.Valid; // ✅ POST 요청 본문 검증을 위해 추가합니다.
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -108,6 +110,13 @@ public class DocumentController {
         return documentService.ask(uuid, question, mode);
     }
 
+    @PostMapping("/{uuid}/ask")
+    public ApiResponseDto<QuestionAnswerResponseDto> askPost(@PathVariable String uuid,
+                                                             @Valid @RequestBody QuestionRequestDto payload) {
+        BotMode mode = payload.mode() == null ? BotMode.STRICT : payload.mode();
+        return documentService.ask(uuid, payload.question(), mode);  // ✅ JSON 본문을 통한 POST 호출을 지원합니다.
+    }
+
     @Operation(summary = "문서 전체 질문", description = "특정 문서를 지정하지 않고 업로드된 모든 문서를 대상으로 질문에 답합니다.")
 
     @GetMapping("/ask")
@@ -116,6 +125,12 @@ public class DocumentController {
         return documentService.ask(null, question, mode);  // ✅ UUID 없이 호출해 전체 문서를 대상으로 유사도 검색을 수행하도록 위임합니다.
     }
     
+    @PostMapping("/ask")
+    public ApiResponseDto<QuestionAnswerResponseDto> askAllPost(@Valid @RequestBody QuestionRequestDto payload) {
+        BotMode mode = payload.mode() == null ? BotMode.STRICT : payload.mode();
+        return documentService.ask(null, payload.question(), mode);  // ✅ POST JSON 요청도 동일한 파이프라인으로 처리합니다.
+    }
+        
     @Operation(summary = "문서 인덱싱 재시도", description = "저장된 파일을 이용해 RAG 인덱싱을 다시 요청합니다.")
     @PostMapping("/{uuid}/reindex")
     public ApiResponseDto<Map<String, Object>> reindexDocument(@PathVariable String uuid) {
