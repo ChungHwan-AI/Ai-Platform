@@ -32,7 +32,10 @@ from config_chroma import (
     get_chroma_settings,  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 조회하기 위한 헬퍼
     reset_collection,  # 차원 불일치 발생 시 컬렉션을 초기화하기 위한 헬퍼
 )  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
-from config_embed import get_embedding_fn  # 임베딩 함수를 가져오기 위해 임포트함
+from config_embed import (
+    get_embedding_fn,  # 임베딩 함수를 가져오기 위해 임포트함
+    get_embedding_backend_info_dict,  # 현재 임베딩 백엔드 상태를 조회하기 위해 임포트함
+)  # 임베딩 설정 조회 및 생성을 위해 관련 유틸을 임포트함
 from utils.encoding import to_utf8_text  # 텍스트 인코딩을 UTF-8로 정규화하기 위해 임포트함
 from utils.chunking import (
     chunk_single_document,
@@ -97,6 +100,29 @@ PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
     [
         ("system", PROMPT_SYSTEM_TEXT),
         ("human", PROMPT_HUMAN_TEMPLATE),
+    ]
+)
+
+# 일반 지식/업무 대화를 위해 RAG 컨텍스트가 없을 때 사용할 별도 시스템 메시지를 정의
+PROMPT_SYSTEM_GENERAL = (
+    "당신은 한국어로 답변하는 친절한 업무 비서입니다."
+    "\n- 회사 문서가 없더라도 일반 상식과 논리를 활용해 문제를 해결하세요."
+    "\n- 사실 근거가 부족하면 추측임을 명확히 밝히고, 안전하고 책임감 있게 답하세요."
+    "\n- 사용자가 요청한 작업(요약, 번역, 일정 제안 등)을 그대로 수행하세요."
+)
+
+# RAG 컨텍스트 없이도 대화를 이어가기 위해 간단한 휴먼 템플릿을 별도로 둔다
+PROMPT_HUMAN_GENERAL = (
+    "사용자 요청: {question}\n"
+    "참고 문서: {context}\n"
+    "친절하게 한국어로 응답하세요."
+)
+
+# 일반 대화 프롬프트 템플릿을 사전에 컴파일해 재사용 비용을 줄인다
+PROMPT_TEMPLATE_GENERAL = ChatPromptTemplate.from_messages(
+    [
+        ("system", PROMPT_SYSTEM_GENERAL),
+        ("human", PROMPT_HUMAN_GENERAL),
     ]
 )
 
@@ -200,6 +226,22 @@ class GenerateResponse(BaseModel):
 
     answer: str = Field(..., description="LLM이 생성한 최종 응답")
 
+class RagHealthResponse(BaseModel):
+    """RAG 백엔드의 기본 구성 상태를 한눈에 보여주는 헬스체크 응답"""
+
+    ready: bool = Field(..., description="핵심 의존성이 모두 준비되었는지 여부")
+    llm_provider: str = Field(..., alias="llmProvider", description="선택된 LLM 공급자 이름")
+    llm_ready: bool = Field(..., alias="llmReady", description="LLM 호출 준비 여부")
+    llm_error: Optional[str] = Field(
+        default=None, alias="llmError", description="LLM 설정 문제 발생 시 사유"
+    )
+    embedding: Dict[str, Any] = Field(
+        default_factory=dict, description="임베딩 백엔드 상태 요약"
+    )
+    chroma: Dict[str, Any] = Field(
+        default_factory=dict, description="Chroma 영속 디렉터리 및 컬렉션 상태"
+    )
+
 # 문서 삭제 요청을 위한 스키마 정의
 class DocDeleteRequest(BaseModel):
     """벡터 DB에서 삭제할 문서 조건을 표현하는 모델"""
@@ -227,13 +269,16 @@ class DocDeleteRequest(BaseModel):
             raise ValueError("docId 또는 source 중 하나는 반드시 전달되어야 합니다.")
         return values
     
-def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChunk], str]:
+def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChunk], str, bool]:
     """검색된 청크를 프롬프트와 API 응답 모두에서 활용 가능한 형태로 가공"""
 
     context_chunks: List[PromptContextChunk] = []  # 프롬프트/응답에서 재사용할 가공 결과를 담는 리스트
     context_blocks: List[str] = []  # ChatPromptTemplate에 전달할 순수 텍스트 블록 모음
+    has_docs = False  # 컨텍스트가 비었는지 여부를 별도 플래그로 표시해 후속 로직에서 일반 대화로 전환할지 결정함
 
     for idx, doc in enumerate(docs, start=1):
+        # 한 건이라도 검색되면 일반 대화 대신 RAG 컨텍스트 기반 답변을 사용하도록 플래그를 세팅함
+        has_docs = True        
         # LangChain Document 메타데이터를 복사해 변형 과정에서 원본이 손상되지 않도록 한다
         meta = dict(doc.metadata or {})
         source_raw = meta.get("source") or meta.get("docId") or "unknown"
@@ -275,14 +320,16 @@ def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChu
         context_blocks.append("(참고할 문서를 찾지 못했습니다.)")
 
     context_text = "\n\n".join(context_blocks)
-    return context_chunks, context_text
+    return context_chunks, context_text, has_docs
 
-def _generate_answer(question: str, context_text: str) -> str:
+def _generate_answer(question: str, context_text: str, *, has_context: bool) -> str:
     """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
 
     provider = os.getenv("LLM_PROVIDER", "openai").lower()  # 기본 LLM 공급자를 openai로 설정함
     # LangChain 프롬프트 템플릿으로 시스템/휴먼 메시지를 미리 구성해 일관된 UX를 유지한다
-    messages = PROMPT_TEMPLATE.format_messages(
+    # 컨텍스트가 없으면 일반 대화 템플릿을 사용해 일상 질문에도 답변하도록 분기함
+    prompt_template = PROMPT_TEMPLATE if has_context else PROMPT_TEMPLATE_GENERAL
+    messages = prompt_template.format_messages(
         question=question.strip(),
         context=context_text,
     )    
@@ -512,6 +559,61 @@ app.include_router(admin_router)
 # Jinja 템플릿 로더를 초기화하여 HTML 기반의 간단한 챗 인터페이스를 제공함
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+def _check_llm_status() -> tuple[bool, Optional[str]]:
+    """LLM 공급자 준비 상태를 확인해 문제를 조기에 노출"""
+
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    # 현재는 OpenAI만 지원하므로 공급자가 다른 경우 바로 에러 메시지를 반환함
+    if provider != "openai":
+        return False, f"지원하지 않는 LLM_PROVIDER: {provider}"
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return False, "OPENAI_API_KEY가 설정되어 있지 않습니다."
+
+    return True, None
+
+
+@app.get(
+    "/health/rag",
+    response_model=RagHealthResponse,
+    summary="RAG 필수 설정 헬스체크",
+    tags=["health"],
+)
+async def rag_health() -> RagHealthResponse:
+    """LLM·임베딩·벡터스토어 설정을 한 번에 점검하는 헬스 엔드포인트"""
+
+    llm_ready, llm_error = _check_llm_status()
+
+    # 임베딩 백엔드 상태는 기존 관리자 API와 동일한 헬퍼를 사용해 조회함
+    try:
+        embedding_info = get_embedding_backend_info_dict(force_refresh=True)
+    except Exception as exc:
+        embedding_info = {"error": str(exc), "resolved_backend": None}
+
+    # Chroma의 영속 경로와 현재 컬렉션 이름을 간단히 반환해 운영자가 위치를 바로 파악하도록 함
+    chroma_dir, collection_name = get_chroma_settings()
+    chroma_summary = {
+        "persistPath": chroma_dir,
+        "collection": collection_name,
+    }
+    try:
+        # 실제 연결 여부를 확인하기 위해 카운트 조회를 시도함
+        vectordb = get_vectordb(get_embedding_fn())
+        chroma_summary["count"] = vectordb._collection.count()
+    except Exception as exc:
+        chroma_summary["error"] = str(exc)
+
+    ready = llm_ready and not embedding_info.get("error") and "error" not in chroma_summary
+
+    return RagHealthResponse(
+        ready=ready,
+        llm_provider=os.getenv("LLM_PROVIDER", "openai"),
+        llm_ready=llm_ready,
+        llm_error=llm_error,
+        embedding=embedding_info,
+        chroma=chroma_summary,
+    )
 
 @app.get("/", response_class=HTMLResponse, summary="웹 챗 인터페이스", tags=["ui"])
 async def chat_ui(request: Request) -> HTMLResponse:
@@ -701,7 +803,7 @@ async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
             metadata_filter=metadata_filter,
         )
 
-        context_chunks, context_text = _prepare_prompt_context(docs)
+        context_chunks, context_text, _has_docs = _prepare_prompt_context(docs)  # 검색 유무는 응답 구성에 필요 없으므로 언더스코어 변수로 받는다
 
         matches = [
             Match(
@@ -734,7 +836,8 @@ async def query_generate(payload: GenerateRequest) -> GenerateResponse:
     """검색된 컨텍스트를 기반으로 LLM 답변만 생성"""
 
     try:
-        answer_text = _generate_answer(payload.question, payload.context)
+        has_context = bool(payload.context.strip())  # 컨텍스트가 비어 있으면 일반 대화 모드로 전환하기 위한 플래그
+        answer_text = _generate_answer(payload.question, payload.context, has_context=has_context)
         return GenerateResponse(answer=answer_text)
     except HTTPException:
         raise
@@ -761,7 +864,7 @@ async def query(payload: QueryRequest) -> QueryResponse:
         )            
 
         # 프롬프트와 응답에서 동일한 라벨과 메타데이터를 쓰기 위해 컨텍스트를 한 번만 가공한다
-        context_chunks, context_text = _prepare_prompt_context(docs)
+        context_chunks, context_text, has_docs = _prepare_prompt_context(docs)
 
         # 검색된 청크 정보를 응답에 포함시키되 UX 에 필요한 부가 필드를 함께 전달한다                
         matches = [        
@@ -778,7 +881,8 @@ async def query(payload: QueryRequest) -> QueryResponse:
         ]
 
         # LLM 에 전달할 컨텍스트 텍스트를 재사용하여 최종 답변을 생성한다
-        answer_text = _generate_answer(payload.question, context_text)
+        # 검색 결과가 없으면 일반 대화 프롬프트로 전환해 일상 질문에도 답하도록 함
+        answer_text = _generate_answer(payload.question, context_text, has_context=has_docs)
 
         return QueryResponse(answer=answer_text, matches=matches)
 
