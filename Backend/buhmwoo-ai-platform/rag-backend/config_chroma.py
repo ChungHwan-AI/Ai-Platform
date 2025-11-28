@@ -5,6 +5,7 @@ import re  # 컬렉션 이름에 사용할 접미사를 안전하게 정규화�
 from pathlib import Path
 from langchain_community.vectorstores import Chroma # LangChain이 제공하는 Chroma 래퍼를 사용하기 위해 임포트함
 from chromadb import PersistentClient  # 컬렉션 삭제 등 직접 제어를 위해 Chroma 기본 클라이언트를 임포트함
+from chromadb.config import Settings  # 텔레메트리 및 저장소 설정을 명시적으로 제어하기 위해 임포트함
 
 logger = logging.getLogger(__name__)  # 모듈 전용 로거를 생성해 상황별 정보를 출력
 
@@ -24,6 +25,13 @@ def _resolve_chroma_dir():
 CHROMA_DIR = _resolve_chroma_dir()
 CHROMA_COLLECTION = _COLLECTION_OVERRIDE or _DEFAULT_COLLECTION_BASE  # 초기 컬렉션 이름을 환경 변수 또는 기본값으로 설정
 
+# Chroma 내부 텔레메트리(PostHog) 버전 불일치로 인한 예외를 방지하기 위해 텔레메트리를 끄고,
+# 영속 경로를 설정과 함께 고정해 둔다.
+CHROMA_CLIENT_SETTINGS = Settings(
+    chroma_db_impl="duckdb+parquet",  # 기본 임베딩 스토어 구현
+    persist_directory=CHROMA_DIR,  # 영속 경로를 Settings에도 명시해 일관성 확보
+    anonymized_telemetry=False,  # PostHog 호출을 비활성화하여 오류 로그를 제거
+)
 
 def _sanitize_suffix(raw: str) -> str:
     """컬렉션 이름에 붙일 접미사를 안전하게 정규화"""
@@ -80,7 +88,7 @@ def reset_collection() -> None:
     """기존 컬렉션을 삭제해 차원 불일치 시 자동 복구하도록 지원"""
 
     collection_name = get_current_collection_name()  # 삭제 대상 컬렉션 이름을 계산
-    client = PersistentClient(path=CHROMA_DIR)  # 영속 디렉터리 기반 Chroma 클라이언트를 준비
+    client = PersistentClient(path=CHROMA_DIR, settings=CHROMA_CLIENT_SETTINGS)  # 영속 디렉터리 기반 Chroma 클라이언트를 준비
     try:
         client.delete_collection(collection_name)  # 기존 컬렉션을 제거해 새 임베딩으로 다시 채울 수 있게 함
         logger.warning(
@@ -109,4 +117,5 @@ def get_vectordb(embedding_fn):
         collection_name=collection_name,
         persist_directory=CHROMA_DIR,
         embedding_function=embedding_fn,
+        client_settings=CHROMA_CLIENT_SETTINGS,
     )
