@@ -77,6 +77,30 @@ def build_retriever(
 ) -> BaseRetriever:
     """Chroma VectorStore에서 환경 변수 기반 Retriever 인스턴스를 생성"""
 
+    # 점수 계산과 Retriever 생성에 동일한 설정을 재사용하기 위해 전략/검색 파라미터를 한 번에 계산한다
+    strategy, search_kwargs = resolve_strategy(top_k=top_k, metadata_filter=metadata_filter)
+
+    if strategy == "mmr":
+        # MMR 전략의 fetch_k, lambda_mult 값은 resolve_strategy 에서 이미 정규화되었으므로 그대로 사용한다
+        logger.info("Retriever 전략(MMR) 적용: fetch_k=%s lambda_mult=%s", search_kwargs["fetch_k"], search_kwargs["lambda_mult"])
+        return vectordb.as_retriever(search_type="mmr", search_kwargs=search_kwargs)
+
+    if strategy == "similarity_score_threshold":
+        # score_threshold 역시 resolve_strategy 에서 기본값을 포함해 계산해두었으므로 그대로 전달한다
+        logger.info("Retriever 전략(Score Threshold) 적용: threshold=%s", search_kwargs["score_threshold"])
+        return vectordb.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs=search_kwargs,
+        )
+
+    # 지정되지 않았거나 지원하지 않는 경우 기본 similarity 검색을 사용한다
+    logger.info("Retriever 전략(Similarity) 적용: k=%s", search_kwargs["k"])
+    return vectordb.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
+
+
+def resolve_strategy(*, top_k: int, metadata_filter: Dict[str, Any] | None) -> tuple[str, Dict[str, Any]]:
+    """환경 변수 기반 검색 전략과 search_kwargs 를 한 번에 계산"""
+
     # 환경 변수 RETRIEVER_STRATEGY로 검색 방식을 결정한다 (기본값: similarity)
     strategy = _normalize_strategy_name(os.getenv("RETRIEVER_STRATEGY"))
     base_kwargs = _build_base_kwargs(top_k=top_k, metadata_filter=metadata_filter)
@@ -87,20 +111,13 @@ def build_retriever(
         fetch_k = _parse_int("RETRIEVER_FETCH_K", fetch_k_default)
         lambda_mult = _parse_float("RETRIEVER_MMR_LAMBDA", 0.5)
         search_kwargs = {**base_kwargs, "fetch_k": max(fetch_k, top_k), "lambda_mult": lambda_mult}
-        # 검색 전략 선택 상황을 로그로 남겨 운영 시점을 파악하기 쉽게 한다
-        logger.info("Retriever 전략(MMR) 적용: fetch_k=%s lambda_mult=%s", search_kwargs["fetch_k"], lambda_mult)
-        return vectordb.as_retriever(search_type="mmr", search_kwargs=search_kwargs)
+        return strategy, search_kwargs
 
     if strategy == "similarity_score_threshold":
         # 유사도 점수 임계치를 활용하는 전략으로, 점수는 0~1 범위로 가정한다
         score_threshold = _parse_float("RETRIEVER_SCORE_THRESHOLD", 0.5)
         search_kwargs = {**base_kwargs, "score_threshold": score_threshold}
-        logger.info("Retriever 전략(Score Threshold) 적용: threshold=%s", score_threshold)
-        return vectordb.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs=search_kwargs,
-        )
+        return strategy, search_kwargs
 
     # 지정되지 않았거나 지원하지 않는 경우 기본 similarity 검색을 사용한다
-    logger.info("Retriever 전략(Similarity) 적용: k=%s", base_kwargs["k"])
-    return vectordb.as_retriever(search_type="similarity", search_kwargs=base_kwargs)
+    return strategy, base_kwargs

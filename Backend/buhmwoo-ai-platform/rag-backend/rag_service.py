@@ -3,7 +3,7 @@ from typing import List
 from langchain_core.documents import Document
 from config_embed import get_embedding_fn
 from config_chroma import get_vectordb  # LangChain Chroma 래퍼를 통해 컬렉션 핸들을 얻기 위해 임포트함
-from retriever_factory import build_retriever  # 검색 전략을 환경 변수 기반으로 선택하기 위한 헬퍼를 임포트함
+from retriever_factory import resolve_strategy  # 검색 전략/파라미터를 한 번만 계산해 점수 계산과 Retriever 설정을 통일하기 위해 임포트함
 from utils.chunking import (
     chunk_documents,
     DEFAULT_CHUNK_OVERLAP,
@@ -41,10 +41,34 @@ def ingest_texts(texts: List[str], metadatas: List[dict] | None = None) -> int:
 def query_text(q: str, k: int = 5, metadata_filter: dict | None = None):
     embedding_fn = get_embedding_fn()
     vectordb = get_vectordb(embedding_fn)
-    # 검색 전략별로 필요한 search_kwargs 구성을 build_retriever에서 담당하도록 위임한다
-    retriever = build_retriever(
-        vectordb=vectordb,
-        top_k=k,
-        metadata_filter=metadata_filter,
-    )
-    return retriever.get_relevant_documents(q)
+    # 검색 전략별 점수 계산 로직과 Retriever 구성을 동일하게 적용하기 위해 설정을 한 번만 계산한다
+    strategy, search_kwargs = resolve_strategy(top_k=k, metadata_filter=metadata_filter)
+
+    if strategy == "mmr":
+        # max_marginal_relevance_search_with_score 는 (Document, score) 튜플을 반환하므로 점수를 메타데이터에 주입해준다
+        results = vectordb.max_marginal_relevance_search_with_score(
+            q,
+            k=search_kwargs.get("k", k),
+            fetch_k=search_kwargs.get("fetch_k"),
+            lambda_mult=search_kwargs.get("lambda_mult"),
+            filter=search_kwargs.get("filter"),
+        )
+    else:
+        # similarity / similarity_score_threshold 전략 모두 relevance score 를 함께 반환하는 API를 사용한다
+        similarity_kwargs = {
+            "k": search_kwargs.get("k", k),
+            "filter": search_kwargs.get("filter"),
+        }
+        if strategy == "similarity_score_threshold":
+            similarity_kwargs["score_threshold"] = search_kwargs.get("score_threshold")
+
+        results = vectordb.similarity_search_with_relevance_scores(q, **similarity_kwargs)
+
+    # 검색 점수를 메타데이터에 포함시켜 호출측에서 confidence 기준을 적용할 수 있게 한다
+    docs_with_scores: List[Document] = []
+    for doc, score in results:
+        meta = dict(doc.metadata or {})
+        meta["score"] = float(score) if score is not None else None  # 검색 점수를 숫자 형태로 보존한다
+        docs_with_scores.append(Document(page_content=doc.page_content, metadata=meta))
+
+    return docs_with_scores
