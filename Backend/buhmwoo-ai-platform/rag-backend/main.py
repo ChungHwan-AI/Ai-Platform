@@ -322,6 +322,36 @@ def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChu
     context_text = "\n\n".join(context_blocks)
     return context_chunks, context_text, has_docs
 
+def _run_retrieval_with_recovery(
+    *,
+    question: str,
+    top_k: int,
+    metadata_filter: Dict[str, Any] | None,
+):
+    """retriever 실행 시 임베딩 차원 불일치 등을 감지해 자동 복구."""
+
+    try:
+        return query_text(question, k=top_k, metadata_filter=metadata_filter)
+    except ValueError as err:
+        message = str(err)
+        if "dimensionality" in message:
+            logger.warning(
+                "임베딩 차원 불일치 감지 → Chroma 컬렉션 초기화 후 재검색을 시도합니다."
+            )
+            try:
+                reset_collection()
+                return query_text(question, k=top_k, metadata_filter=metadata_filter)
+            except Exception as retry_exc:
+                logger.exception("컬렉션 초기화 후 재검색에 실패했습니다.")
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "벡터 컬렉션 임베딩 차원이 맞지 않아 재시도에 실패했습니다. "
+                        "`python wipe_chroma.py` 실행 후 문서를 다시 업로드하세요."
+                    ),
+                ) from retry_exc
+        raise
+
 def _generate_answer(question: str, context_text: str, *, has_context: bool) -> str:
     """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
 
@@ -797,9 +827,9 @@ async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
     try:
         metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
 
-        docs = query_text(
-            payload.question,
-            k=payload.top_k,
+        docs = _run_retrieval_with_recovery(
+            question=payload.question,
+            top_k=payload.top_k,
             metadata_filter=metadata_filter,
         )
 
@@ -857,9 +887,9 @@ async def query(payload: QueryRequest) -> QueryResponse:
         metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
          
         # rag_service.query_text 를 통해 검색 전략/파라미터 구성을 일관되게 재사용한다
-        docs = query_text(
-            payload.question,
-            k=payload.top_k,
+        docs = _run_retrieval_with_recovery(
+            question=payload.question,
+            top_k=payload.top_k,
             metadata_filter=metadata_filter,
         )            
 
