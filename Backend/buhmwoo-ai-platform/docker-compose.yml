@@ -26,7 +26,7 @@ services:
       SPRING_DATASOURCE_USERNAME: oneask
       SPRING_DATASOURCE_PASSWORD: oneask123
       STORAGE_ROOT: /shared/documents
-      RAG_BACKEND_URL: http://rag-backend:8000
+      RAG_BACKEND_URL: http://rag-backend:8001
       TZ: Asia/Seoul
     depends_on:
       - mariadb
@@ -46,7 +46,7 @@ services:
       CHROMA_DIR: /app/chroma_db      
       TZ: Asia/Seoul
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - rag_db:/app/chroma_db
       - documents:/shared/documents
