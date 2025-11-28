@@ -279,7 +279,10 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             }
 
             log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
-            return ApiResponseDto.fail("질의 실패: " + e.getMessage());
+            // ✅ RAG 백엔드 장애 시에도 화면이 멈추지 않도록 즉시 fallback 답변을 제공합니다.
+            QuestionAnswerResponseDto degraded = buildFallbackAnswer(questionText, mode);
+            questionAnswerCache.put(docId, questionText, mode, degraded); // ✅ 동일 질문 재시도 시에도 빠르게 안내합니다.
+            return ApiResponseDto.ok(degraded, "RAG 호출 실패: 임시 답변을 제공합니다. 원인=" + e.getMessage());
         }
     }
 
