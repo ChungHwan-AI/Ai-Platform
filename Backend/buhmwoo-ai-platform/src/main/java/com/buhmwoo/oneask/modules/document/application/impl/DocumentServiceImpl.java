@@ -229,24 +229,29 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
     @Override // ✅ 질의 처리 로직이 인터페이스 계약을 따른다는 것을 나타냅니다.
     public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode) {
-        if (!StringUtils.hasText(question)) {
+        String normalizedQuestion = Optional.ofNullable(question)
+                .map(String::trim)
+                .orElse(""); // ✅ 질문 앞뒤 공백을 제거해 순수 질의만 남깁니다.
+
+        if (!StringUtils.hasText(normalizedQuestion)) {        
             return ApiResponseDto.fail("질의 실패: 질문이 비어 있습니다."); // ✅ 필수 파라미터 누락을 즉시 안내합니다.
         }
-
+        
+        String questionText = normalizedQuestion; // ✅ 정규화된 질문 문자열을 이후 파이프라인 전체에서 일관되게 사용합니다.
         String docId = StringUtils.hasText(uuid) ? uuid : null; // ✅ 문서 ID가 비어 있으면 전체 검색으로 전환합니다.
         try {
-            if (mode != BotMode.STRICT && isGeneralSmallTalk(question)) { // ✅ 하이브리드 계열에서는 일상 질문을 빠르게 처리합니다.
-                QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(question); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
-                questionAnswerCache.put(docId, question, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
+            if (mode != BotMode.STRICT && isGeneralSmallTalk(questionText)) { // ✅ 하이브리드 계열에서는 일상 질문을 빠르게 처리합니다.
+                QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(questionText); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
+                questionAnswerCache.put(docId, questionText, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
                 return ApiResponseDto.ok(smallTalk, "응답 성공(일상 질문)"); // ✅ RAG 호출을 생략한 빠른 응답임을 설명합니다.
             }
 
-            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, question, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
+            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, questionText, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
             if (cached.isPresent()) {
                 return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
             }
 
-            DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(question, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
+            DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(questionText, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
             DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
 
             Double maxScore = retrievalResult.matches().stream()
@@ -256,20 +261,20 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .orElse(null); // ✅ 점수가 없으면 null 로 처리해 fallback 분기에 전달합니다.
 
             if (maxScore != null && maxScore >= DEFAULT_SCORE_THRESHOLD) { // ✅ 임계값 이상이면 기존 RAG 흐름을 그대로 사용합니다.
-                QuestionAnswerResponseDto ragAnswer = buildRagAnswer(question, retrievalResult); // ✅ 정상 RAG 응답을 생성합니다.
-                questionAnswerCache.put(docId, question, mode, ragAnswer); // ✅ 동일 질의/모드 재호출을 위한 캐시를 저장합니다.
+                QuestionAnswerResponseDto ragAnswer = buildRagAnswer(questionText, retrievalResult); // ✅ 정상 RAG 응답을 생성합니다.
+                questionAnswerCache.put(docId, questionText, mode, ragAnswer); // ✅ 동일 질의/모드 재호출을 위한 캐시를 저장합니다.
                 return ApiResponseDto.ok(ragAnswer, "응답 성공");        
             }
             
-            QuestionAnswerResponseDto fallback = buildFallbackAnswer(question, mode); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
-            questionAnswerCache.put(docId, question, mode, fallback); // ✅ fallback 결과도 캐싱해 동일 질의 반복 호출을 줄입니다.
+            QuestionAnswerResponseDto fallback = buildFallbackAnswer(questionText, mode); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
+            questionAnswerCache.put(docId, questionText, mode, fallback); // ✅ fallback 결과도 캐싱해 동일 질의 반복 호출을 줄입니다.
             return ApiResponseDto.ok(fallback, "응답 성공(fallback)");
 
         } catch (Exception e) {
             if (isTimeoutException(e)) { // ✅ 타임아웃 시에는 실패 대신 안내 메시지와 임시 답변을 제공합니다.
                 log.warn("[ASK][TIMEOUT] 응답 지연으로 임시 답변을 반환합니다: {}", e.getMessage()); // ✅ 운영 로그에 타임아웃 사실을 기록합니다.
-                QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(question, mode); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
-                questionAnswerCache.put(docId, question, mode, timeoutAnswer); // ✅ 동일 질문 재시도 시 즉시 안내하도록 캐싱합니다.
+                QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(questionText, mode); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
+                questionAnswerCache.put(docId, questionText, mode, timeoutAnswer); // ✅ 동일 질문 재시도 시 즉시 안내하도록 캐싱합니다.
                 return ApiResponseDto.ok(timeoutAnswer, "응답 지연: 임시 답변을 제공합니다."); // ✅ 사용자에게 성공 상태로 전달해 UX 저하를 완화합니다.
             }
 
