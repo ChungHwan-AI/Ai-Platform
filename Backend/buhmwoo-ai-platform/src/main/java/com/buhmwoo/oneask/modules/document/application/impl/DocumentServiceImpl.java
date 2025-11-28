@@ -72,7 +72,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     private final QuestionAnswerCache questionAnswerCache; // ✅ 반복 질문에 대한 캐시를 제공합니다.
 
     private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
-    private static final double DEFAULT_SCORE_THRESHOLD = 0.35; // ✅ 검색 신뢰도가 낮을 때 fallback 으로 전환하기 위한 임계값입니다.
+    private static final double DEFAULT_SCORE_THRESHOLD = 0.55; // ✅ 충분한 유사도가 확보된 경우에만 문서 기반 답변을 신뢰하도록 임계값을 상향 조정합니다.
     private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(8); // ✅ 일상 대화는 짧은 대기 시간 내에 응답하도록 제한해 체감 속도를 높입니다.
     private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(12); // ✅ 일반 지식 fallback도 과도한 대기 없이 빠르게 답변하도록 합니다.
 
@@ -239,27 +239,30 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         
         String questionText = normalizedQuestion; // ✅ 정규화된 질문 문자열을 이후 파이프라인 전체에서 일관되게 사용합니다.
         String docId = StringUtils.hasText(uuid) ? uuid : null; // ✅ 문서 ID가 비어 있으면 전체 검색으로 전환합니다.
-        try {
-            if (mode != BotMode.STRICT && isGeneralSmallTalk(questionText)) { // ✅ 하이브리드 계열에서는 일상 질문을 빠르게 처리합니다.
-                QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(questionText); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
-                questionAnswerCache.put(docId, questionText, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
-                return ApiResponseDto.ok(smallTalk, "응답 성공(일상 질문)"); // ✅ RAG 호출을 생략한 빠른 응답임을 설명합니다.
-            }
+        Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, questionText, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
+        if (cached.isPresent()) {
+            return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
+        }
 
-            Optional<QuestionAnswerResponseDto> cached = questionAnswerCache.get(docId, questionText, mode); // ✅ 동일 질의 및 모드 조합에 대한 캐시를 확인합니다.
-            if (cached.isPresent()) {
-                return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
-            }
+        boolean smallTalkOnly = docId == null && mode != BotMode.STRICT && isGeneralSmallTalk(questionText); // ✅ 전체 질의이면서 확실한 일상 대화일 때만 RAG를 우회합니다.
+        if (smallTalkOnly) {
+            QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(questionText); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
+            questionAnswerCache.put(docId, questionText, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
+            return ApiResponseDto.ok(smallTalk, "응답 성공(일상 질문)"); // ✅ RAG 호출을 생략한 빠른 응답임을 설명합니다.
+        }
+
+        try {    
 
             DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(questionText, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
             DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
 
-            Double maxScore = retrievalResult.matches().stream()
+            List<RetrievedDocumentChunk> matches = Optional.ofNullable(retrievalResult.matches()).orElse(List.of()); // ✅ 검색 결과가 비어 있을 때 NPE를 방지합니다.
+            Double maxScore = matches.stream()
                     .map(this::extractScore) // ✅ 검색 결과의 유사도 점수를 추출합니다.
                     .filter(Objects::nonNull)
                     .max(Double::compareTo)
                     .orElse(null); // ✅ 점수가 없으면 null 로 처리해 fallback 분기에 전달합니다.
-            boolean hasMatches = retrievalResult.matches() != null && !retrievalResult.matches().isEmpty(); // ✅ 스코어 없이도 검색 결과가 있는지 확인합니다.
+            boolean hasMatches = !matches.isEmpty(); // ✅ 스코어 없이도 검색 결과가 있는지 확인합니다.
 
             if ((maxScore != null && maxScore >= DEFAULT_SCORE_THRESHOLD) || (maxScore == null && hasMatches)) { // ✅ 점수가 없더라도 검색 결과가 있다면 RAG 흐름을 우선합니다.
                 QuestionAnswerResponseDto ragAnswer = buildRagAnswer(questionText, retrievalResult); // ✅ 정상 RAG 응답을 생성합니다.
@@ -268,22 +271,19 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             }
             
             QuestionAnswerResponseDto fallback = buildFallbackAnswer(questionText, mode); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
-            questionAnswerCache.put(docId, questionText, mode, fallback); // ✅ fallback 결과도 캐싱해 동일 질의 반복 호출을 줄입니다.
             return ApiResponseDto.ok(fallback, "응답 성공(fallback)");
 
         } catch (Exception e) {
-            if (isTimeoutException(e)) { // ✅ 타임아웃 시에는 실패 대신 안내 메시지와 임시 답변을 제공합니다.
+            if (isTimeoutException(e)) { // ✅ 타임아웃 시에는 실패 상태로 안내 메시지와 임시 답변을 제공합니다.
                 log.warn("[ASK][TIMEOUT] 응답 지연으로 임시 답변을 반환합니다: {}", e.getMessage()); // ✅ 운영 로그에 타임아웃 사실을 기록합니다.
                 QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(questionText, mode); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
-                questionAnswerCache.put(docId, questionText, mode, timeoutAnswer); // ✅ 동일 질문 재시도 시 즉시 안내하도록 캐싱합니다.
-                return ApiResponseDto.ok(timeoutAnswer, "응답 지연: 임시 답변을 제공합니다."); // ✅ 사용자에게 성공 상태로 전달해 UX 저하를 완화합니다.
+                return ApiResponseDto.fail("RAG 응답 지연: " + e.getMessage(), timeoutAnswer); // ✅ 실패로 표시해 모니터링에서 지연을 인지할 수 있게 합니다.
             }
 
             log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
             // ✅ RAG 백엔드 장애 시에도 화면이 멈추지 않도록 즉시 fallback 답변을 제공합니다.
             QuestionAnswerResponseDto degraded = buildFallbackAnswer(questionText, mode);
-            questionAnswerCache.put(docId, questionText, mode, degraded); // ✅ 동일 질문 재시도 시에도 빠르게 안내합니다.
-            return ApiResponseDto.ok(degraded, "RAG 호출 실패: 임시 답변을 제공합니다. 원인=" + e.getMessage());
+            return ApiResponseDto.fail("RAG 호출 실패: " + e.getMessage(), degraded); // ✅ 장애를 성공으로 오인하지 않도록 명확히 실패 응답을 반환합니다.
         }
     }
 
