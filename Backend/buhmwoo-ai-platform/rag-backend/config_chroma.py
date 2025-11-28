@@ -3,7 +3,7 @@ import logging  # 벡터 스토어 초기화 과정을 로깅하기 위해 로�
 import os
 import re  # 컬렉션 이름에 사용할 접미사를 안전하게 정규화하기 위한 모듈
 from pathlib import Path
-from langchain_community.vectorstores import Chroma # LangChain이 제공하는 Chroma 래퍼를 사용하기 위해 임포트함
+from langchain_chroma import Chroma  # 신규 분리 패키지에서 Chroma 래퍼를 임포트해 경고를 제거
 from chromadb import PersistentClient  # 컬렉션 삭제 등 직접 제어를 위해 Chroma 기본 클라이언트를 임포트함
 from chromadb.config import Settings  # 텔레메트리 및 저장소 설정을 명시적으로 제어하기 위해 임포트함
 
@@ -25,11 +25,9 @@ def _resolve_chroma_dir():
 CHROMA_DIR = _resolve_chroma_dir()
 CHROMA_COLLECTION = _COLLECTION_OVERRIDE or _DEFAULT_COLLECTION_BASE  # 초기 컬렉션 이름을 환경 변수 또는 기본값으로 설정
 
-# Chroma 내부 텔레메트리(PostHog) 버전 불일치로 인한 예외를 방지하기 위해 텔레메트리를 끄고,
-# 영속 경로를 설정과 함께 고정해 둔다.
+# Chroma v0.5+ 에서는 persist_directory 기반 레거시 설정이 더 이상 허용되지 않으므로
+# 새로운 PersistentClient(path=...) 생성 방식을 따른다. 텔레메트리만 비활성화한다.
 CHROMA_CLIENT_SETTINGS = Settings(
-    chroma_db_impl="duckdb+parquet",  # 기본 임베딩 스토어 구현
-    persist_directory=CHROMA_DIR,  # 영속 경로를 Settings에도 명시해 일관성 확보
     anonymized_telemetry=False,  # PostHog 호출을 비활성화하여 오류 로그를 제거
 )
 
@@ -83,12 +81,16 @@ def get_current_collection_name() -> str:
 
     return _ensure_collection_name()  # 내부적으로 최신 상태를 확인한 뒤 값을 돌려줌
 
+def _build_client() -> PersistentClient:
+    """새로운 Chroma 클라이언트 생성 (path 기반 신규 방식)"""
+
+    return PersistentClient(path=CHROMA_DIR, settings=CHROMA_CLIENT_SETTINGS)
 
 def reset_collection() -> None:
     """기존 컬렉션을 삭제해 차원 불일치 시 자동 복구하도록 지원"""
 
     collection_name = get_current_collection_name()  # 삭제 대상 컬렉션 이름을 계산
-    client = PersistentClient(path=CHROMA_DIR, settings=CHROMA_CLIENT_SETTINGS)  # 영속 디렉터리 기반 Chroma 클라이언트를 준비
+    client = _build_client()  # 경고 없이 동작하는 신규 클라이언트 사용
     try:
         client.delete_collection(collection_name)  # 기존 컬렉션을 제거해 새 임베딩으로 다시 채울 수 있게 함
         logger.warning(
@@ -112,10 +114,12 @@ def get_chroma_settings() -> tuple[str, str]:
 def get_vectordb(embedding_fn):    
     collection_name = _ensure_collection_name()  # 최신 임베딩 구성에 맞는 컬렉션 이름을 확보
 
+    # 신규 Chroma 아키텍처에서는 persist_directory 대신 PersistentClient를 직접 주입해야 한다
+    client = _build_client()
+
     logger.info("[Chroma] dir=%s collection=%s", CHROMA_DIR, collection_name)  # 선택된 경로와 컬렉션을 기록
     return Chroma(        
         collection_name=collection_name,
-        persist_directory=CHROMA_DIR,
         embedding_function=embedding_fn,
-        client_settings=CHROMA_CLIENT_SETTINGS,
+        client=client,
     )

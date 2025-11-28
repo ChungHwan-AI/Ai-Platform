@@ -9,6 +9,7 @@ chromadb==0.5.*
 langchain==0.3.*
 langchain-core==0.3.*
 langchain-community==0.3.*
+langchain-chroma>=0.1.4
 langchain-huggingface>=0.1.0
 sentence-transformers>=3.0
 charset-normalizer>=3.3
