@@ -264,7 +264,11 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .orElse(null); // ✅ 점수가 없으면 null 로 처리해 fallback 분기에 전달합니다.
             boolean hasMatches = !matches.isEmpty(); // ✅ 스코어 없이도 검색 결과가 있는지 확인합니다.
 
-            if ((maxScore != null && maxScore >= DEFAULT_SCORE_THRESHOLD) || (maxScore == null && hasMatches)) { // ✅ 점수가 없더라도 검색 결과가 있다면 RAG 흐름을 우선합니다.
+            boolean useRag = (mode == BotMode.STRICT && hasMatches)
+                    || (maxScore != null && maxScore >= DEFAULT_SCORE_THRESHOLD)
+                    || (maxScore == null && hasMatches); // ✅ STRICT 모드에서는 점수에 관계없이 검색 결과가 있으면 RAG 흐름을 강제합니다.
+
+            if (useRag) { // ✅ 우선 조건을 변수로 분리해 가독성을 높입니다.
                 QuestionAnswerResponseDto ragAnswer = buildRagAnswer(questionText, retrievalResult); // ✅ 정상 RAG 응답을 생성합니다.
                 questionAnswerCache.put(docId, questionText, mode, ragAnswer); // ✅ 동일 질의/모드 재호출을 위한 캐시를 저장합니다.
                 return ApiResponseDto.ok(ragAnswer, "응답 성공");        
