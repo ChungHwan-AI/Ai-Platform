@@ -18,7 +18,7 @@ import java.util.concurrent.TimeoutException; // ✅ 블로킹 호출의 시간 
 @Component // ✅ 자동 주입을 위해 컴포넌트로 선언합니다.
 public class RagGptClient implements GptClient {
 
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30); // ✅ 장시간 대기를 방지하기 위한 타임아웃 값(15초 → 30초 상향)입니다.
+    
 
     private final OneAskProperties props; // ✅ 백엔드 URL을 주입받기 위한 필드입니다.
     private final WebClient ragWebClient; // ✅ 실제 HTTP 호출을 수행할 WebClient입니다.
@@ -30,7 +30,7 @@ public class RagGptClient implements GptClient {
 
     @Override    
     public GptResponse generate(GptRequest request) {
-        return generate(request, REQUEST_TIMEOUT); // ✅ 기본 타임아웃을 사용해 기존 동작을 유지합니다.
+        return generate(request, null); // ✅ 기본 호출에서는 별도 타임아웃 없이 RAG 백엔드 응답을 끝까지 대기합니다.
     }
 
     @Override
@@ -40,24 +40,28 @@ public class RagGptClient implements GptClient {
             throw new IllegalStateException("RAG 백엔드 URL이 설정되어 있지 않습니다."); // ✅ 필수 설정 누락 시 즉시 예외를 발생시킵니다.
         }
 
-        Duration effectiveTimeout = timeout != null && !timeout.isNegative() && !timeout.isZero()
-                ? timeout
-                : REQUEST_TIMEOUT; // ✅ 잘못된 입력을 방어하고 기본값으로 안전하게 대체합니다.
+        boolean useTimeout = timeout != null && !timeout.isNegative() && !timeout.isZero(); // ✅ 호출자가 필요할 때만 타임아웃을 적용합니다.
 
         Mono<GptResponsePayload> call = ragWebClient.post()
                 .uri(baseUrl + "/query/generate") // ✅ GPT 생성 전용 엔드포인트로 요청을 전송합니다.
                 .contentType(MediaType.APPLICATION_JSON) // ✅ JSON 형태로 요청 본문을 보냅니다.
                 .bodyValue(request)
                 .retrieve()
-                .bodyToMono(GptResponsePayload.class)
-                .timeout(effectiveTimeout); // ✅ 호출 상황에 맞는 대기 시간을 유연하게 적용합니다.
+                .bodyToMono(GptResponsePayload.class);
+
+        if (useTimeout) { // ✅ 명시적으로 요청된 경우에만 타임아웃을 설정합니다.
+            call = call.timeout(timeout);
+        }
 
         GptResponsePayload payload;
         try {
             payload = call.block(); // ✅ Reactive 파이프라인에 설정된 타임아웃을 존중하면서 응답을 동기적으로 대기합니다.
         } catch (Exception e) {
-            if (isTimeout(e)) { // ✅ 타임아웃을 명확히 감지해 사용자 친화적인 안내를 제공합니다.
-                throw new IllegalStateException("GPT 응답 지연: 30초 이내에 결과를 받지 못했습니다. 잠시 후 다시 시도해 주세요.", e);
+            if (useTimeout && isTimeout(e)) { // ✅ 호출자가 제한 시간을 준 경우에만 지연 안내를 노출합니다.
+                long timeoutSeconds = timeout != null ? timeout.toSeconds() : 0; // ✅ 정적 분석 도구에서 null 가능성을 제거합니다.
+                String delayNotice = String.format("GPT 응답 지연: %d초 내에 결과를 받지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                        timeoutSeconds);
+                throw new IllegalStateException(delayNotice, e);
             }
             throw e; // ✅ 기타 예외는 기존 흐름을 유지해 상위에서 처리하도록 위임합니다.
         }
