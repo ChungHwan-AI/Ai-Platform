@@ -274,19 +274,19 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 return ApiResponseDto.ok(ragAnswer, "응답 성공");        
             }
             
-            QuestionAnswerResponseDto fallback = buildFallbackAnswer(questionText, mode); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
+            QuestionAnswerResponseDto fallback = buildFallbackAnswer(questionText, mode, docId == null); // ✅ 점수가 부족할 때 모드별 fallback 응답을 생성합니다.
             return ApiResponseDto.ok(fallback, "응답 성공(fallback)");
 
         } catch (Exception e) {
             if (isTimeoutException(e)) { // ✅ 타임아웃 시에는 실패 상태로 안내 메시지와 임시 답변을 제공합니다.
                 log.warn("[ASK][TIMEOUT] 응답 지연으로 임시 답변을 반환합니다: {}", e.getMessage()); // ✅ 운영 로그에 타임아웃 사실을 기록합니다.
-                QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(questionText, mode); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
+                QuestionAnswerResponseDto timeoutAnswer = buildTimeoutFallback(questionText, mode, docId == null); // ✅ 지연 상황을 알려주는 안내 문구와 대체 답변을 구성합니다.
                 return ApiResponseDto.fail("RAG 응답 지연: " + e.getMessage(), timeoutAnswer); // ✅ 실패로 표시해 모니터링에서 지연을 인지할 수 있게 합니다.
             }
 
             log.error("문서 질의 실패: {}", e.getMessage(), e); // ✅ 예외 스택을 함께 남겨 추적 가능성을 높입니다.
             // ✅ RAG 백엔드 장애 시에도 화면이 멈추지 않도록 즉시 fallback 답변을 제공합니다.
-            QuestionAnswerResponseDto degraded = buildFallbackAnswer(questionText, mode);
+            QuestionAnswerResponseDto degraded = buildFallbackAnswer(questionText, mode, docId == null);
             return ApiResponseDto.fail("RAG 호출 실패: " + e.getMessage(), degraded); // ✅ 장애를 성공으로 오인하지 않도록 명확히 실패 응답을 반환합니다.
         }
     }
@@ -317,7 +317,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         return payload;
     }
 
-    private QuestionAnswerResponseDto buildFallbackAnswer(String question, BotMode mode) {
+    private QuestionAnswerResponseDto buildFallbackAnswer(String question, BotMode mode, boolean globalQuery) {
         if (mode == BotMode.STRICT) { // ✅ STRICT 모드에서는 문서가 없음을 알리고 종료합니다.
             return QuestionAnswerResponseDto.builder()
                     .title(buildAnswerTitle(question, List.of()))
@@ -325,6 +325,10 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .sources(List.of())
                     .fromCache(false)
                     .build();
+        }
+
+        if (globalQuery && isCasualEverydayQuestion(question)) { // ✅ 전체 질의이면서 일상 질문이면 ChatGPT 스타일로 바로 응답합니다.
+            return buildSmallTalkAnswer(question);
         }
 
         String generalAnswer = generateGeneralKnowledgeAnswer(question); // ✅ HYBRID 모드에서 일반 지식 기반 답변을 준비합니다.
@@ -342,12 +346,22 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 .build();
     }
 
-    private QuestionAnswerResponseDto buildTimeoutFallback(String question, BotMode mode) { // ✅ RAG 백엔드 지연 시 사용자에게 전달할 임시 답변을 생성합니다.
+    private QuestionAnswerResponseDto buildTimeoutFallback(String question, BotMode mode, boolean globalQuery) { // ✅ RAG 백엔드 지연 시 사용자에게 전달할 임시 답변을 생성합니다.
         String guidance = "현재 답변이 지연되고 있어요. 잠시 후 다시 시도해 주세요."; // ✅ 지연 상황을 즉시 안내합니다.
         if (mode == BotMode.STRICT) { // ✅ STRICT 모드에서는 문서 검색 실패 메시지와 함께 지연 안내를 제공합니다.
             return QuestionAnswerResponseDto.builder()
                     .title(buildAnswerTitle(question, List.of()))
                     .answer(guidance + "\n지금은 문서 검색이 원활하지 않아 임시 안내만 드려요.")
+                    .sources(List.of())
+                    .fromCache(false)
+                    .build();
+        }
+
+        if (globalQuery && isCasualEverydayQuestion(question)) { // ✅ 일상 질문이면 지연 안내 후 바로 자연스러운 답변을 제공합니다.
+            QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(question);
+            return QuestionAnswerResponseDto.builder()
+                    .title(smallTalk.getTitle())
+                    .answer(guidance + "\n\n" + smallTalk.getAnswer())
                     .sources(List.of())
                     .fromCache(false)
                     .build();
@@ -404,6 +418,26 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 || normalized.contains("thank"); // ✅ 대표적인 일상 키워드를 나열해 빠른 분기를 만듭니다.
     }
         
+    private boolean isCasualEverydayQuestion(String question) { // ✅ 하이브리드 모드에서 자유롭게 답할 수 있는 일상 질문을 판별합니다.
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+
+        String normalized = question.toLowerCase(Locale.ROOT);
+        List<String> corporateKeywords = List.of("정책", "규정", "지침", "절차", "프로세스", "보안", "승인", "결재", "비용", "경비", "인사", "휴가", "근태", "매뉴얼");
+        boolean looksCorporate = corporateKeywords.stream().anyMatch(normalized::contains); // ✅ 사내 정책성 질문은 제외합니다.
+        if (looksCorporate) {
+            return false;
+        }
+
+        return isGeneralSmallTalk(question)
+                || normalized.contains("인구")
+                || normalized.contains("맛집")
+                || normalized.contains("여행")
+                || normalized.contains("추천")
+                || normalized.contains("정보"); // ✅ 일상적인 호기심/대화 소재를 넓혀 자연스러운 답변을 허용합니다.
+    }
+
     private Double extractScore(RetrievedDocumentChunk chunk) {
         Map<String, Object> metadata = chunk.metadata(); // ✅ 검색 결과 메타데이터에서 점수를 찾아봅니다.
         if (metadata == null) {
