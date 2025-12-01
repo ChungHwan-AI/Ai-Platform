@@ -73,8 +73,8 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
 
     private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
     private static final double DEFAULT_SCORE_THRESHOLD = 0.55; // ✅ 충분한 유사도가 확보된 경우에만 문서 기반 답변을 신뢰하도록 임계값을 상향 조정합니다.
-    private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(8); // ✅ 일상 대화는 짧은 대기 시간 내에 응답하도록 제한해 체감 속도를 높입니다.
-    private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(12); // ✅ 일반 지식 fallback도 과도한 대기 없이 빠르게 답변하도록 합니다.
+    private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(300); // ✅ 일상 대화는 짧은 대기 시간 내에 응답하도록 제한해 체감 속도를 높입니다.
+    private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(300); // ✅ 일반 지식 fallback도 과도한 대기 없이 빠르게 답변하도록 합니다.
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
     @Override // ✅ 인터페이스 계약을 충실히 따르고 있음을 표시합니다.
@@ -367,7 +367,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .build();
         }
 
-        String generalAnswer = generateGeneralKnowledgeAnswer(question); // ✅ HYBRID 모드에서는 일반 지식 기반 임시 답변을 함께 제공합니다.
+        String generalAnswer = buildAdaptiveGuidance(question); // ✅ 질문 키워드에 맞춘 즉시 반환 가능한 맞춤형 가이드를 사용합니다.
         String combined = guidance + "\n\n[임시 답변] " + generalAnswer; // ✅ 안내 문구와 임시 답변을 묶어 전달합니다.
 
         return QuestionAnswerResponseDto.builder()
@@ -395,7 +395,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .orElse("지금은 즉시 답변을 만들지 못했어요. 다시 한번 물어봐 주실래요?"); // ✅ GPT가 응답하지 못한 경우 대비용 안내 문구입니다.
         } catch (Exception e) {
             log.warn("[SMALL_TALK][TIMEOUT] 빠른 응답 실패: {}", e.getMessage()); // ✅ 타임아웃 등 예외 상황을 로그로 남겨 원인 추적을 돕습니다.
-            String fallback = generateGeneralKnowledgeAnswer(question); // ✅ 빠른 응답이 실패해도 일반 지식 기반의 즉시 답변을 준비합니다.
+            String fallback = buildAdaptiveGuidance(question); // ✅ GPT 호출 없이 바로 제공 가능한 맞춤형 안내를 사용해 대기 시간을 최소화합니다.
             message = "답변이 조금 지연되고 있어요. 잠시 후 다시 물어봐 주시면 더 빠르게 도와드릴게요.\n\n[임시 답변] "
                     + fallback; // ✅ 안내 문구와 함께 대체 답변을 제공해 무조건 응답을 보장합니다.
         }
@@ -479,8 +479,51 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             return response.answer();
         } catch (Exception e) {
             log.warn("[GENERAL_KNOWLEDGE][TIMEOUT] fallback 지식 생성 실패: {}", e.getMessage()); // ✅ 대기 초과나 기타 예외를 기록해 진단을 돕습니다.
-            return "지금은 일반 지식 답변을 준비하는 데 시간이 너무 오래 걸리고 있어요. 잠시 후 다시 시도해 주세요."; // ✅ 실패 시에도 즉시 안내 메시지를 반환합니다.
+            return "지금은 일반 지식 답변이 지연되고 있어 질문에 맞춘 안내를 대신 제공합니다.\n\n" + buildAdaptiveGuidance(question); // ✅ 실패 시에도 즉시 맞춤형 안내 메시지를 반환합니다.
         }
+    }
+
+    private String buildAdaptiveGuidance(String question) { // ✅ GPT 호출이 실패해도 질문에 맞춰 즉시 전달할 수 있는 안내를 구성합니다.
+        String subject = (question == null || question.isBlank())
+                ? "요청하신 내용"
+                : "\"" + question.trim() + "\""; // ✅ 원문 질문을 짧게 노출해 사용자가 맥락을 파악하도록 합니다.
+
+        String normalized = question == null ? "" : question.toLowerCase(Locale.ROOT);
+        boolean looksHowTo = normalized.contains("방법") || normalized.contains("how") || normalized.contains("설정") || normalized.contains("steps");
+        boolean looksError = normalized.contains("오류") || normalized.contains("에러") || normalized.contains("error") || normalized.contains("failed") || normalized.contains("fail");
+        boolean looksPolicy = normalized.contains("정책") || normalized.contains("규정") || normalized.contains("정의") || normalized.contains("승인") || normalized.contains("보안");
+        boolean looksAccess = normalized.contains("권한") || normalized.contains("계정") || normalized.contains("로그인") || normalized.contains("접근");
+
+        List<String> tips = new ArrayList<>();
+        if (looksError) {
+            tips.add("문구, 발생 시각, 캡처·로그를 함께 남기면 원인 추적이 빨라집니다.");
+            tips.add("최근 변경된 설정·배포·계정 권한을 확인해 보세요.");
+            tips.add("재현 절차를 짧게 정리해 공유하면 즉시 대응하기 수월합니다.");
+        } else if (looksHowTo) {
+            tips.add("최종 목표와 제약(시스템, 권한, 일정)을 먼저 명확히 적어 주세요.");
+            tips.add("현재 단계와 막힌 지점을 알려주시면 필요한 절차나 메뉴를 바로 짚어드릴 수 있습니다.");
+            tips.add("관련 매뉴얼/위키 링크나 화면 위치를 함께 적으면 더 정확히 안내할 수 있습니다.");
+        } else if (looksPolicy) {
+            tips.add("적용 범위(팀/조직/시점)와 예외 조건을 함께 알려주세요.");
+            tips.add("최근 공지·정책 문서 버전을 확인해달라고 요청해보세요.");
+            tips.add("승인 흐름(요청 → 검토 → 결재)과 담당 부서를 함께 묻는 것이 빠릅니다.");
+        } else if (looksAccess) {
+            tips.add("필요한 시스템/리소스 이름과 현재 권한 수준을 적어주세요.");
+            tips.add("최근 비밀번호 변경·SSO 연동 여부 등 계정 상태를 확인해 보세요.");
+            tips.add("보안팀/관리자에게 전달할 계정 식별자(이메일, 사번 등)를 준비해 두면 빠르게 처리됩니다.");
+        } else {
+            tips.add("질문 배경과 원하는 결과를 1~2문장으로 정리해 주세요.");
+            tips.add("관련 부서·시스템·문서를 함께 언급하면 답변 품질이 올라갑니다.");
+            tips.add("추가로 궁금한 점을 연달아 남기면 바로 이어서 도울 수 있습니다.");
+        }
+
+        StringBuilder builder = new StringBuilder();
+        builder.append(subject).append("에 대해 바로 참고할 수 있는 맞춤 가이드입니다:\n");
+        for (int i = 0; i < tips.size(); i++) {
+            builder.append(i + 1).append(") ").append(tips.get(i)).append("\n");
+        }
+        builder.append("필요한 부분을 더 알려주시면 바로 이어서 도와드릴게요.");
+        return builder.toString();
     }
 
     private boolean isTimeoutException(Throwable e) { // ✅ 예외 체인에서 타임아웃 계열 오류를 탐지하기 위한 헬퍼입니다.
