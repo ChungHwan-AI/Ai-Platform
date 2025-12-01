@@ -395,8 +395,11 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .orElse("지금은 즉시 답변을 만들지 못했어요. 다시 한번 물어봐 주실래요?"); // ✅ GPT가 응답하지 못한 경우 대비용 안내 문구입니다.
         } catch (Exception e) {
             log.warn("[SMALL_TALK][TIMEOUT] 빠른 응답 실패: {}", e.getMessage()); // ✅ 타임아웃 등 예외 상황을 로그로 남겨 원인 추적을 돕습니다.
-            message = "답변이 조금 지연되고 있어요. 잠시 후 다시 물어봐 주시면 더 빠르게 도와드릴게요."; // ✅ 예외 시에도 사용자에게 부드러운 안내를 제공합니다.
-        }    
+            String fallback = generateGeneralKnowledgeAnswer(question); // ✅ 빠른 응답이 실패해도 일반 지식 기반의 즉시 답변을 준비합니다.
+            message = "답변이 조금 지연되고 있어요. 잠시 후 다시 물어봐 주시면 더 빠르게 도와드릴게요.\n\n[임시 답변] "
+                    + fallback; // ✅ 안내 문구와 함께 대체 답변을 제공해 무조건 응답을 보장합니다.
+        }
+
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of())) // ✅ 기존 제목 생성 규칙을 재사용합니다.
                 .answer(message) // ✅ 준비한 메시지를 본문에 담습니다.
