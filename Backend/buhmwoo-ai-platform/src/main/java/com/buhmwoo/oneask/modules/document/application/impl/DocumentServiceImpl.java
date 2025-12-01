@@ -14,6 +14,9 @@ import com.buhmwoo.oneask.modules.document.application.question.DocumentRetrieve
 import com.buhmwoo.oneask.modules.document.application.question.GptClient; // ✅ GPT 호출 모듈을 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.GptRequest; // ✅ GPT 요청 DTO를 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.GptResponse; // ✅ GPT 응답 DTO를 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.QuestionIntent; // ✅ 질문 타입 분류 결과를 사용하기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.QuestionIntentClassifier; // ✅ 질문 타입 분류기를 주입받기 위해 임포트합니다.
+import com.buhmwoo.oneask.modules.document.application.question.QuestionIntentResult; // ✅ 분류 결과 DTO를 활용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.QuestionAnswerCache; // ✅ 질문 응답 캐시 컴포넌트를 사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.application.question.RetrievedDocumentChunk; // ✅ 검색 결과에서 점수를 추출하기 위해 청크 모델을 임포트합니다.
 import com.buhmwoo.oneask.modules.document.domain.Document;
@@ -69,6 +72,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
     private final WebClient ragWebClient; // ✅ RAG 백엔드와 통신할 공용 WebClient입니다.
     private final DocumentRetriever documentRetriever; // ✅ 검색 단계를 담당하는 모듈입니다.
     private final GptClient gptClient; // ✅ GPT 응답 생성을 담당하는 모듈입니다.
+     private final QuestionIntentClassifier intentClassifier; // ✅ 질문 타입을 분류해 적절한 파이프라인을 결정합니다.
     private final QuestionAnswerCache questionAnswerCache; // ✅ 반복 질문에 대한 캐시를 제공합니다.
 
     private static final int DEFAULT_TOP_K = 4; // ✅ 검색 단계에서 기본으로 가져올 청크 개수를 정의합니다.
@@ -244,14 +248,20 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
             return ApiResponseDto.ok(cached.get(), "응답 성공(캐시)"); // ✅ 캐시 적중 시 즉시 반환합니다.
         }
 
-        boolean smallTalkOnly = docId == null && mode != BotMode.STRICT && isGeneralSmallTalk(questionText); // ✅ 전체 질의이면서 확실한 일상 대화일 때만 RAG를 우회합니다.
-        if (smallTalkOnly) {
-            QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(questionText); // ✅ 빠른 응답을 위해 사전 정의된 답변을 생성합니다.
-            questionAnswerCache.put(docId, questionText, mode, smallTalk); // ✅ 동일한 일상 질문 재호출 시 즉시 반환하도록 캐싱합니다.
-            return ApiResponseDto.ok(smallTalk, "응답 성공(일상 질문)"); // ✅ RAG 호출을 생략한 빠른 응답임을 설명합니다.
+        QuestionIntentResult intentResult = intentClassifier.classify(questionText, docId); // ✅ 질문 의도를 먼저 분류해 처리 경로를 결정합니다.
+        QuestionIntent intent = resolveIntent(intentResult.intent(), docId, mode); // ✅ 분류 결과와 모드에 맞춰 최종 의도를 조정합니다.
+
+        if (intent == QuestionIntent.SMALL_TALK && mode != BotMode.STRICT) { // ✅ 스몰톡은 RAG 검색 없이 바로 응답합니다.
+            QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(questionText);
+            questionAnswerCache.put(docId, questionText, mode, smallTalk);
+            return ApiResponseDto.ok(smallTalk, "응답 성공(일상 대화)");        
         }
 
-        try {    
+        if (intent == QuestionIntent.GENERAL_KNOWLEDGE && mode != BotMode.STRICT) { // ✅ 일반 지식 질문은 문서 검색을 건너뜁니다.
+            QuestionAnswerResponseDto generalAnswer = buildGeneralKnowledgeOnlyAnswer(questionText);
+            questionAnswerCache.put(docId, questionText, mode, generalAnswer);
+            return ApiResponseDto.ok(generalAnswer, "응답 성공(일반 지식)");
+        }
 
             DocumentRetrievalRequest retrievalRequest = new DocumentRetrievalRequest(questionText, docId, DEFAULT_TOP_K); // ✅ 기본 top-k 값을 상수로 관리합니다.
             DocumentRetrievalResult retrievalResult = documentRetriever.retrieve(retrievalRequest); // ✅ 검색 단계 실행 결과를 가져옵니다.
@@ -291,6 +301,19 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         }
     }
 
+    private QuestionIntent resolveIntent(QuestionIntent classified, String docId, BotMode mode) { // ✅ 분류 결과와 모드에 따라 최종 의도를 결정합니다.
+        if (classified == QuestionIntent.UNKNOWN && docId != null) {
+            return QuestionIntent.DOC_KNOWLEDGE; // ✅ 문서가 지정된 경우 문서 우선 경로로 보냅니다.
+        }
+        if (classified == QuestionIntent.UNKNOWN && docId == null) {
+            return QuestionIntent.GENERAL_KNOWLEDGE; // ✅ 문서가 없으면 일반 지식 경로로 처리합니다.
+        }
+        if (classified == QuestionIntent.SMALL_TALK && mode == BotMode.STRICT) {
+            return QuestionIntent.DOC_KNOWLEDGE; // ✅ STRICT 모드에서는 스몰톡도 문서 우선 경로로 강제합니다.
+        }
+        return classified;
+    }
+        
     private QuestionAnswerResponseDto buildRagAnswer(String question, DocumentRetrievalResult retrievalResult) {
         GptRequest gptRequest = new GptRequest(question, retrievalResult.context()); // ✅ 검색 결과 컨텍스트와 질문을 묶어 LLM 호출 파라미터로 준비합니다.
         GptResponse gptResponse = gptClient.generate(gptRequest); // ✅ GPT 모듈을 통해 최종 답변 생성을 요청합니다.
@@ -327,10 +350,6 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .build();
         }
 
-        if (globalQuery && isCasualEverydayQuestion(question)) { // ✅ 전체 질의이면서 일상 질문이면 ChatGPT 스타일로 바로 응답합니다.
-            return buildSmallTalkAnswer(question);
-        }
-
         String generalAnswer = generateGeneralKnowledgeAnswer(question); // ✅ HYBRID 모드에서 일반 지식 기반 답변을 준비합니다.
         String hybridMessage = "[문서/DB 검색 결과]\n" +
                 "- 현재 보유한 문서/DB에서는 관련 정보를 찾지 못했습니다.\n\n" +
@@ -357,15 +376,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                     .build();
         }
 
-        if (globalQuery && isCasualEverydayQuestion(question)) { // ✅ 일상 질문이면 지연 안내 후 바로 자연스러운 답변을 제공합니다.
-            QuestionAnswerResponseDto smallTalk = buildSmallTalkAnswer(question);
-            return QuestionAnswerResponseDto.builder()
-                    .title(smallTalk.getTitle())
-                    .answer(guidance + "\n\n" + smallTalk.getAnswer())
-                    .sources(List.of())
-                    .fromCache(false)
-                    .build();
-        }
+
 
         String generalAnswer = buildAdaptiveGuidance(question); // ✅ 질문 키워드에 맞춘 즉시 반환 가능한 맞춤형 가이드를 사용합니다.
         String combined = guidance + "\n\n[임시 답변] " + generalAnswer; // ✅ 안내 문구와 임시 답변을 묶어 전달합니다.
@@ -406,40 +417,7 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
                 .sources(List.of()) // ✅ 문서 기반이 아니므로 출처는 비워둡니다.
                 .fromCache(false) // ✅ 캐시 여부는 호출부에서 처리하도록 기본값을 둡니다.
                 .build();
-    }
-
-    private boolean isGeneralSmallTalk(String question) { // ✅ RAG 없이 처리할 수 있는 일상 질문 여부를 판별합니다.
-        if (question == null) {
-            return false; // ✅ 질문이 없으면 일상 질문으로 보지 않습니다.
-        }
-        String normalized = question.toLowerCase(Locale.ROOT); // ✅ 키워드 매칭을 위해 소문자로 정규화합니다.
-        return normalized.contains("날씨")
-                || normalized.contains("안녕")
-                || normalized.contains("hello")
-                || normalized.contains("hi")
-                || normalized.contains("고마워")
-                || normalized.contains("thank"); // ✅ 대표적인 일상 키워드를 나열해 빠른 분기를 만듭니다.
-    }
-        
-    private boolean isCasualEverydayQuestion(String question) { // ✅ 하이브리드 모드에서 자유롭게 답할 수 있는 일상 질문을 판별합니다.
-        if (question == null || question.isBlank()) {
-            return false;
-        }
-
-        String normalized = question.toLowerCase(Locale.ROOT);
-        List<String> corporateKeywords = List.of("정책", "규정", "지침", "절차", "프로세스", "보안", "승인", "결재", "비용", "경비", "인사", "휴가", "근태", "매뉴얼");
-        boolean looksCorporate = corporateKeywords.stream().anyMatch(normalized::contains); // ✅ 사내 정책성 질문은 제외합니다.
-        if (looksCorporate) {
-            return false;
-        }
-
-        return isGeneralSmallTalk(question)
-                || normalized.contains("인구")
-                || normalized.contains("맛집")
-                || normalized.contains("여행")
-                || normalized.contains("추천")
-                || normalized.contains("정보"); // ✅ 일상적인 호기심/대화 소재를 넓혀 자연스러운 답변을 허용합니다.
-    }
+    }    
 
     private Double extractScore(RetrievedDocumentChunk chunk) {
         Map<String, Object> metadata = chunk.metadata(); // ✅ 검색 결과 메타데이터에서 점수를 찾아봅니다.
@@ -467,6 +445,17 @@ public class DocumentServiceImpl implements DocumentService { // ✅ 공통 서�
         return null; // ✅ 점수를 계산할 수 없는 경우 null 로 처리합니다.
     }
 
+    private QuestionAnswerResponseDto buildGeneralKnowledgeOnlyAnswer(String question) { // ✅ 문서 검색을 건너뛴 일반 지식 응답을 생성합니다.
+        String prefix = "[문서/DB 검색을 건너뛰고 일반 지식을 기준으로 답변합니다]\n";
+        String answer = generateGeneralKnowledgeAnswer(question);
+        return QuestionAnswerResponseDto.builder()
+                .title(buildAnswerTitle(question, List.of()))
+                .answer(prefix + answer)
+                .sources(List.of())
+                .fromCache(false)
+                .build();
+    }
+        
     private String generateGeneralKnowledgeAnswer(String question) {
         String fallbackContext = "(문서/DB 검색 결과 없음) 일반적인 상식과 업계 지식을 바탕으로 질문에 답변해 주세요. " +
                 "회사 내부 정책이라고 단정하지 말고 '일반적으로'라는 표현을 사용해 주세요."; // ✅ 일반 지식 기반 답변임을 LLM에 명확히 전달하는 컨텍스트입니다.
