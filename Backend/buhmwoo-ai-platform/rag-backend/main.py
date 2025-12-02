@@ -1,61 +1,74 @@
 # main.py
-# 표준 로깅 사용을 위한 import
+
 import logging
+import os
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Dict, Any
 
-import os  # LLM 공급자와 키 등 환경 변수 접근을 위해 os 모듈을 임포트함
-
-from dataclasses import dataclass  # 프롬프트 컨텍스트 블록 정보를 구조화하기 위해 dataclass를 사용함
-
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request  # 업로드 엔드포인트에서 폼 필드와 파일을 다루고 템플릿 렌더링에 필요한 Request 객체를 사용하기 위해 임포트함
-
-from dotenv import load_dotenv  # .env 파일을 읽어오기 위한 함수 임포트
-from pathlib import Path  # 업로드 파일 저장 경로를 다루기 위해 Path 클래스를 임포트함
-from typing import List, Optional, Dict, Any  # 타입 힌트를 명확히 하기 위해 필요한 제네릭 타입들을 임포트함
-
-from langchain_core.documents import Document  # 청크를 LangChain Document 형태로 저장하기 위해 Document 클래스를 임포트함
-
-from langchain_core.prompts import ChatPromptTemplate  # LLM 프롬프트 생성을 위한 도구
-
-from fastapi.responses import HTMLResponse  # 간단한 웹 UI를 제공하기 위해 HTML 응답 클래스를 임포트함
-from fastapi.templating import Jinja2Templates  # Jinja 템플릿을 이용한 화면 렌더링을 위해 임포트함
-
+import httpx
+from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from langchain_core.documents import Document
+from openai import OpenAI
 from pydantic import (
     BaseModel,
     Field,
     ConfigDict,
     AliasChoices,
     model_validator,
-)  # 요청/응답 스키마 정의 및 유효성 검증 훅 사용을 위해 Pydantic 유틸리티를 임포트함
+)
 
-from config_chroma import (
-    get_vectordb,  # 벡터 스토어 핸들을 얻기 위한 함수
-    get_chroma_settings,  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 조회하기 위한 헬퍼
-    reset_collection,  # 차원 불일치 발생 시 컬렉션을 초기화하기 위한 헬퍼
-)  # Chroma 벡터 DB 설정 정보를 불러오기 위해 관련 유틸을 임포트함
-from config_embed import (
-    get_embedding_fn,  # 임베딩 함수를 가져오기 위해 임포트함
-    get_embedding_backend_info_dict,  # 현재 임베딩 백엔드 상태를 조회하기 위해 임포트함
-)  # 임베딩 설정 조회 및 생성을 위해 관련 유틸을 임포트함
-from utils.encoding import to_utf8_text  # 텍스트 인코딩을 UTF-8로 정규화하기 위해 임포트함
+from config_chroma import get_vectordb, get_chroma_settings, reset_collection
+from config_embed import get_embedding_fn, get_embedding_backend_info_dict
+from utils.encoding import to_utf8_text
 from utils.chunking import (
     chunk_single_document,
     DEFAULT_CHUNK_OVERLAP,
     DEFAULT_CHUNK_SIZE,
-)  # 업로드 시 일관된 청킹 규칙을 적용하기 위해 공통 유틸을 임포트함
-from admin_router import router as admin_router  # 관리자용 라우터를 메인 앱에 포함시키기 위해 임포트함
+)
+from admin_router import router as admin_router
+from rag_service import query_text
 
-from rag_service import query_text  # 검색 서비스 모듈의 일관된 질의 헬퍼를 재사용하기 위해 임포트함
+# -----------------------------
+# 로깅 설정
+# -----------------------------
 
-
-# 모듈 전역 로거
 logger = logging.getLogger(__name__)
 
-# Uvicorn 및 루트 로거가 INFO 이상으로 출력되도록 보정
 if not logging.getLogger().handlers:
-    # 기본 핸들러가 없을 때만 기본 설정을 적용
     logging.basicConfig(level=logging.INFO)
-# Uvicorn 런타임 로그 레벨을 명시적으로 INFO로 맞춤
+
 logging.getLogger("uvicorn").setLevel(logging.INFO)
+
+# -----------------------------
+# 환경 변수 로드
+# -----------------------------
+
+load_dotenv()
+
+# -----------------------------
+# OpenAI Responses + web_search 설정
+# -----------------------------
+
+openai_client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY"),
+    base_url=os.environ.get("OPENAI_BASE_URL") or None,
+)
+
+OPENAI_RESPONSES_MODEL = (
+    os.environ.get("OPENAI_RESPONSES_MODEL")
+    or os.environ.get("OPENAI_CHAT_MODEL")
+    or "gpt-4.1-mini"
+)
+
+# -----------------------------
+# 프롬프트 관련 구조체/문자열
+# -----------------------------
+
 
 @dataclass
 class PromptContextChunk:
@@ -71,74 +84,110 @@ class PromptContextChunk:
     preview: str  # 프론트에서 사용할 간단한 스니펫 텍스트
 
 
-# 시스템 메시지에 사용할 기본 지침 문자열 정의
 PROMPT_SYSTEM_TEXT = (
-    "당신은 사내 문서를 바탕으로 답을 제공하는 한국어 도우미입니다."
-    "\n- 제공된 문서 근거를 벗어난 추측은 피하고, 근거가 없으면 솔직하게 모른다고 답변하세요."
-    "\n- 쉬운 한국어를 사용하고, 전문 용어가 등장하면 짧은 풀이를 덧붙이세요."
-    "\n- 모든 창의적 통찰과 예시는 반드시 문서 근거에서 출발했음을 명시하세요."
-    "\n- 답변에는 반드시 다음 섹션을 포함하고 마크다운 헤더로 구분하세요: '## 핵심 요약', '## 사실에 기반한 창의적 통찰', '## 쉬운 비유나 예시'."
-    "\n- '사실에 기반한 창의적 통찰'과 '쉬운 비유나 예시'에 등장하는 문장은 각 문장 끝에 관련 청크 인용을 [청크 N] 형태로 붙이세요."
-    "\n- 근거를 찾을 수 없는 경우에는 '근거 부족'이라고 적고 추측을 덧붙이지 마세요."
+    "당신은 한국어로 답변하는 친절한 업무 도우미입니다."
+    "\n- [참고 문서 및 웹 검색 컨텍스트] 블록에 포함된 정보를 우선 활용해 질문에 답변하세요."
+    "\n- 웹 검색 결과가 문서 내용이나 당신의 기존 지식과 다를 경우, 최신 외부 정보(웹 검색 결과)를 더 신뢰하세요."
+    "\n- 먼저 사용자의 질문에 대한 결론을 1~2문장으로 분명하게 말한 뒤, 필요하면 간단한 설명을 1~3문장 덧붙이세요."
+    "\n- 너무 딱딱한 면책 문구(예: '근거 부족', '정책과 다를 수 있습니다')는 사용하지 말고,"
+    " 필요할 때만 짧게 '정확한 최신 정보는 공식 자료에서 한 번 더 확인해 주세요.' 정도만 덧붙이세요."
+    "\n- 답변은 자연스러운 한국어 문단 또는 짧은 목록 형태로 작성하고,"
+    " '## 핵심 요약', '## 사실에 기반한 창의적 통찰' 같은 섹션 헤더는 사용하지 마세요."
 )
 
-
-# 사람이 이해하기 쉬운 예시/질문/참고 문서를 포함한 휴먼 메시지 템플릿을 정의
 PROMPT_HUMAN_TEMPLATE = (
-    "응답 형식 예시:\n"
-    "## 핵심 요약\n- [청크 1] 핵심 사실 요약\n\n"
-    "## 사실에 기반한 창의적 통찰\n- [청크 2] 통찰 내용\n\n"
-    "## 쉬운 비유나 예시\n- [청크 3] 비유 또는 예시\n\n"
-    "[질문]\n{question}\n\n"
-    "[참고 문서]\n{context}\n\n"
-    "위 자료를 참고해 독자가 쉽게 이해할 수 있는 답변을 작성하세요."
+    "다음은 사용자의 질문과 참고용으로 제공된 문서/검색 컨텍스트입니다.\n\n"
+    "[질문]\n"
+    "{question}\n\n"
+    "[참고 문서 및 웹 검색 컨텍스트]\n"
+    "{context}\n\n"
+    "위 정보를 바탕으로, 사용자가 실제 업무에 바로 활용할 수 있을 정도로 "
+    "간단명료하고 자연스러운 한국어로 답변해 주세요."
 )
 
-
-# LangChain ChatPromptTemplate으로 시스템/휴먼 메시지를 사전에 컴파일해둔다
-PROMPT_TEMPLATE = ChatPromptTemplate.from_messages(
-    [
-        ("system", PROMPT_SYSTEM_TEXT),
-        ("human", PROMPT_HUMAN_TEMPLATE),
-    ]
-)
-
-# 일반 지식/업무 대화를 위해 RAG 컨텍스트가 없을 때 사용할 별도 시스템 메시지를 정의
 PROMPT_SYSTEM_GENERAL = (
     "당신은 한국어로 답변하는 친절한 업무 비서입니다."
-    "\n- 회사 문서가 없더라도 일반 상식과 논리를 활용해 문제를 해결하세요."
+    "\n- 질문이 환율, 주가, 비트코인, 금리, 부동산 가격, 집값, 날씨, 미세먼지, "
+    "최신 뉴스/이슈, 선거, 경기 결과/스코어 등 '시간에 따라 자주 변하는 값'에 대한 것이라면 "
+    "반드시 web_search 도구를 호출해 최신 정보를 먼저 조회한 뒤 답변하세요."
+    "\n- web_search 도구를 사용할 수 없거나 검색 결과가 비어 있을 때는, "
+    "오늘 기준의 구체적인 수치나 값을 추정해서 말하지 말고 "
+    "'실시간 데이터를 조회할 수 없어 정확한 수치를 제공하기 어렵다'고 먼저 알려주세요."
+    "\n- 특히 '현재 1달러당 원화 환율은 약 1,300원입니다. 환율은 시장 상황에 따라 변동되므로, "
+    "정확한 최신 수치는 공식 금융 기관의 자료를 참고하시기 바랍니다.'와 같은 "
+    "일반적인 문장을 자동으로 생성하지 마세요. 이 문장은 과거 평균값에 기반한 예시일 뿐이며, "
+    "실제 최신 환율을 반영하지 않습니다."
+    "\n- 그 외의 일반적인 상식/설명/조언 질문은 회사 문서와 무관하게 "
+    "당신이 가진 일반 지식과 논리를 활용해 문제를 해결하세요."
     "\n- 사실 근거가 부족하면 추측임을 명확히 밝히고, 안전하고 책임감 있게 답하세요."
-    "\n- 사용자가 요청한 작업(요약, 번역, 일정 제안 등)을 그대로 수행하세요."
+    "\n- 사용자가 요청한 작업(요약, 번역, 일정 제안 등)을 그대로 수행하되, "
+    "너무 장황하게 설명하지 말고 핵심 위주로 간단명료하게 답변하세요."
 )
 
-# RAG 컨텍스트 없이도 대화를 이어가기 위해 간단한 휴먼 템플릿을 별도로 둔다
 PROMPT_HUMAN_GENERAL = (
     "사용자 요청: {question}\n"
     "참고 문서: {context}\n"
     "친절하게 한국어로 응답하세요."
 )
 
-# 일반 대화 프롬프트 템플릿을 사전에 컴파일해 재사용 비용을 줄인다
-PROMPT_TEMPLATE_GENERAL = ChatPromptTemplate.from_messages(
-    [
-        ("system", PROMPT_SYSTEM_GENERAL),
-        ("human", PROMPT_HUMAN_GENERAL),
-    ]
-)
+
+def _build_openai_prompt(question: str, context: Optional[str], has_context: bool) -> str:
+    """
+    OpenAI Responses API에 그대로 넘길 하나의 텍스트 프롬프트를 만든다.
+
+    - 질문에 '현재/지금/환율/주가/날씨/뉴스/경기 결과' 등 실시간/시점 관련 키워드가 포함된 경우,
+      web_search 도구를 반드시 사용하도록 추가 지침을 system 프롬프트에 붙인다.
+    """
+    q = (question or "").strip()
+    c = (context or "").strip()
+
+    # 실시간 질문이면 web_search 강제 지침을 붙여준다.
+    extra_live_instruction = ""
+    try:
+        if should_use_web_search(q):
+            extra_live_instruction = (
+                "\n- 이 질문은 시점/실시간 정보(예: 환율, 주가, 비트코인, 금리, 부동산 가격, 날씨, "
+                "미세먼지, 최신 뉴스/이슈, 선거, 경기 결과/스코어 등)에 관한 것이므로 "
+                "반드시 web_search 도구를 최소 1회 이상 호출해 최신 정보를 조회한 뒤 답변하세요."
+                "\n- web_search를 사용하지 않고는 '오늘 기준 얼마입니다'처럼 "
+                "구체적인 수치나 날짜가 중요한 값을 추정해서 말하지 마세요."
+                "\n- web_search로도 최신 데이터를 가져오지 못한 경우에는 "
+                "'실시간 데이터를 조회할 수 없어 정확한 수치를 제공하기 어렵다'고 먼저 설명하고, "
+                "과거 평균이나 일반적인 범위를 최신 수치인 것처럼 말하지 마세요."
+            )
+    except Exception:
+        # 혹시라도 여기서 에러가 나더라도 전체 프롬프트 생성은 계속 진행되도록 방어
+        extra_live_instruction = ""
+
+    if has_context and c:
+        # 문서 기반 RAG 답변용
+        system = PROMPT_SYSTEM_TEXT + extra_live_instruction
+        human = PROMPT_HUMAN_TEMPLATE.format(question=q, context=c)
+    else:
+        # 일반 지식 + (필요 시) 웹 검색용
+        system = PROMPT_SYSTEM_GENERAL + extra_live_instruction
+        human = PROMPT_HUMAN_GENERAL.format(question=q, context=c)
+
+    return f"{system.strip()}\n\n{human.strip()}"
+
+
+
+
+# -----------------------------
+# Pydantic 모델
+# -----------------------------
+
 
 class QueryRequest(BaseModel):
     """/query 요청 스키마 정의"""
 
-    # 사용자의 자연어 질문 텍스트를 입력받는 필드
     question: str = Field(..., description="사용자가 던진 질문 문장")
-    # 필요시 특정 문서(UUID 등)로 검색 범위를 제한하기 위한 필드
     doc_id: Optional[str] = Field(
         default=None,
         description="벡터 검색 대상을 제한할 문서 ID (선택)",
         alias="docId",
         validation_alias=AliasChoices("docId", "doc_id"),
     )
-    # 벡터 검색에서 가져올 상위 청크 개수를 제어하는 필드
     top_k: int = Field(
         default=4,
         ge=1,
@@ -148,7 +197,6 @@ class QueryRequest(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        # Swagger 문서에 샘플 요청을 노출하기 위한 설정
         json_schema_extra={
             "examples": [
                 {
@@ -157,52 +205,45 @@ class QueryRequest(BaseModel):
                     "top_k": 3,
                 }
             ]
-        }
+        },
     )
 
 
 class Match(BaseModel):
     """벡터 검색 결과 청크 정보를 담는 스키마"""
 
-    # LLM 응답과 프론트엔드 인용에 사용할 고유 라벨 (예: [청크 1])
     reference: str = Field(..., description="LLM 응답 인용에 사용할 청크 라벨")
-    # 청크 순번(1부터 시작). camelCase 입력도 허용하기 위해 validation_alias 를 지정한다.
     chunk_index: int = Field(
-        ...,  # 검색 결과에 반드시 존재해야 하는 필드이므로 필수로 지정한다
+        ...,
         ge=1,
         alias="chunkIndex",
         validation_alias=AliasChoices("chunkIndex", "chunk_index"),
         description="검색 결과 순번 (1부터 시작)",
-    )    
-    # 청크의 실제 본문 텍스트를 그대로 노출
+    )
     content: str = Field(..., description="검색된 청크 본문")
-    # 프론트엔드에서 목록 형태로 노출할 때 사용할 간략한 스니펫
-    preview: str = Field(..., description="줄바꿈을 제거하고 길이를 제한한 미리보기 텍스트")
-    # UX 에서 출처를 명확히 보여주기 위한 별도 필드
+    preview: str = Field(..., description="줄바꿈 제거/길이 제한 미리보기 텍스트")
     source: str = Field(..., description="원본 문서 이름 또는 ID")
-    # 페이지/슬라이드 등의 위치를 전달하기 위한 선택적 필드
     page: Optional[int] = Field(
         default=None,
         description="문서 내 위치 정보 (해당하지 않으면 null)",
     )
-    # 추후 출처, 페이지 등의 메타데이터를 전달하기 위한 필드
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
         description="청크에 연결된 원본 메타데이터",
     )
 
-model_config = ConfigDict(populate_by_name=True)  # chunk_index 키로도 값을 설정할 수 있도록 허용한다.
+    model_config = ConfigDict(populate_by_name=True)
+
 
 class QueryResponse(BaseModel):
     """/query 응답 스키마 정의"""
 
-    # LLM이 최종적으로 생성한 답변 텍스트를 담는 필드
     answer: str = Field(..., description="LLM이 생성한 최종 응답")
-    # 참고용으로 검색된 청크 목록을 그대로 반환
     matches: List[Match] = Field(
         default_factory=list,
         description="벡터 검색으로 선택된 청크 목록",
     )
+
 
 class RetrieveResponse(BaseModel):
     """/query/retrieve 응답 스키마 정의"""
@@ -218,13 +259,17 @@ class GenerateRequest(BaseModel):
     """/query/generate 요청 스키마 정의"""
 
     question: str = Field(..., description="사용자가 던진 질문 문장")
-    context: str = Field(..., description="벡터 검색 결과를 하나의 텍스트로 결합한 컨텍스트")
+    context: Optional[str] = Field(
+        default=None,
+        description="벡터 검색 결과를 하나의 텍스트로 결합한 컨텍스트",
+    )
 
 
 class GenerateResponse(BaseModel):
     """/query/generate 응답 스키마 정의"""
 
     answer: str = Field(..., description="LLM이 생성한 최종 응답")
+
 
 class RagHealthResponse(BaseModel):
     """RAG 백엔드의 기본 구성 상태를 한눈에 보여주는 헬스체크 응답"""
@@ -242,47 +287,49 @@ class RagHealthResponse(BaseModel):
         default_factory=dict, description="Chroma 영속 디렉터리 및 컬렉션 상태"
     )
 
-# 문서 삭제 요청을 위한 스키마 정의
+
 class DocDeleteRequest(BaseModel):
     """벡터 DB에서 삭제할 문서 조건을 표현하는 모델"""
 
-    # 업로드 당시 부여한 문서 UUID. 값이 존재하면 source 보다 우선 적용한다.
     doc_id: Optional[str] = Field(
         default=None,
         alias="docId",
         description="삭제할 문서의 UUID",
         validation_alias=AliasChoices("docId", "doc_id"),
     )
-    # 문서 업로드 시 기록한 원본 파일명. docId 가 없을 때 보조 키로 활용한다.
     source: Optional[str] = Field(
         default=None,
         description="삭제할 문서를 찾기 위한 파일명",
     )
 
-    model_config = ConfigDict(populate_by_name=True)  # camelCase 요청도 허용하도록 설정한다.
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def validate_identifier(cls, values: "DocDeleteRequest") -> "DocDeleteRequest":
-        """docId 와 source 가 모두 비어 있으면 요청 자체를 거부한다."""
-
         if not (values.doc_id or values.source):
             raise ValueError("docId 또는 source 중 하나는 반드시 전달되어야 합니다.")
         return values
-    
+
+
+# -----------------------------
+# RAG 컨텍스트 준비 / 검색 복구
+# -----------------------------
+
+
 def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChunk], str, bool]:
     """검색된 청크를 프롬프트와 API 응답 모두에서 활용 가능한 형태로 가공"""
 
-    context_chunks: List[PromptContextChunk] = []  # 프롬프트/응답에서 재사용할 가공 결과를 담는 리스트
-    context_blocks: List[str] = []  # ChatPromptTemplate에 전달할 순수 텍스트 블록 모음
-    has_docs = False  # 컨텍스트가 비었는지 여부를 별도 플래그로 표시해 후속 로직에서 일반 대화로 전환할지 결정함
+    context_chunks: List[PromptContextChunk] = []
+    context_blocks: List[str] = []
+    has_docs = False
 
     for idx, doc in enumerate(docs, start=1):
-        # 한 건이라도 검색되면 일반 대화 대신 RAG 컨텍스트 기반 답변을 사용하도록 플래그를 세팅함
-        has_docs = True        
-        # LangChain Document 메타데이터를 복사해 변형 과정에서 원본이 손상되지 않도록 한다
+        has_docs = True
+
         meta = dict(doc.metadata or {})
         source_raw = meta.get("source") or meta.get("docId") or "unknown"
         source = str(source_raw)
+
         page_value = meta.get("page")
         if isinstance(page_value, (int, float)):
             page = int(page_value)
@@ -295,7 +342,7 @@ def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChu
         header = f"{reference} 출처: {source}"
         if page is not None:
             header += f" | 페이지: {page}"
-        # 공백을 정리한 본문과 스니펫을 각각 준비한다
+
         body = doc.page_content.strip()
         snippet = " ".join(body.split())
         if len(snippet) > 160:
@@ -316,11 +363,11 @@ def _prepare_prompt_context(docs: List[Document]) -> tuple[List[PromptContextChu
         )
 
     if not context_blocks:
-        # 검색된 청크가 없을 때는 안내 문구를 넣어 LLM이 상황을 명확히 이해하도록 돕는다        
         context_blocks.append("(참고할 문서를 찾지 못했습니다.)")
 
     context_text = "\n\n".join(context_blocks)
     return context_chunks, context_text, has_docs
+
 
 def _run_retrieval_with_recovery(
     *,
@@ -352,56 +399,88 @@ def _run_retrieval_with_recovery(
                 ) from retry_exc
         raise
 
-def _generate_answer(question: str, context_text: str, *, has_context: bool) -> str:
-    """환경 변수 설정에 따라 LLM을 호출하여 답변 텍스트를 생성"""
 
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()  # 기본 LLM 공급자를 openai로 설정함
-    # LangChain 프롬프트 템플릿으로 시스템/휴먼 메시지를 미리 구성해 일관된 UX를 유지한다
-    # 컨텍스트가 없으면 일반 대화 템플릿을 사용해 일상 질문에도 답변하도록 분기함
-    prompt_template = PROMPT_TEMPLATE if has_context else PROMPT_TEMPLATE_GENERAL
-    messages = prompt_template.format_messages(
-        question=question.strip(),
-        context=context_text,
-    )    
+# -----------------------------
+# OpenAI Responses + web_search 호출
+# -----------------------------
 
-    if provider == "openai":
-        # OpenAI 키가 없으면 즉시 오류를 발생시켜 클라이언트가 설정을 점검하도록 유도
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OPENAI_API_KEY가 설정되어 있지 않습니다.")
 
-        from langchain_openai import ChatOpenAI  # 지연 임포트로 선택적 의존성 관리를 수행함
+def _generate_answer(
+    question: str,
+    context: Optional[str],
+    has_context: bool,
+) -> str:
+    """
+    문서 컨텍스트 유무에 따라 프롬프트를 만들고
+    OpenAI Responses API + web_search 도구로 최종 답변을 생성한다.
+    """
 
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-5")
-        base_url = os.getenv("OPENAI_BASE_URL")
+    provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    if provider != "openai":
+        raise HTTPException(
+            status_code=500,
+            detail=f"지원하지 않는 LLM_PROVIDER: {provider} (현재는 openai + web_search만 지원)",
+        )
+
+    if not question or not question.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="질문이 비어 있습니다.",
+        )
+
+    prompt = _build_openai_prompt(question, context, has_context)
+    # 참고용 로그만 남기고,
+    # 실제로 tool_choice는 넘기지 않는다 (auto 모드에 맡김).
+    try:
+        use_web_search = should_use_web_search(question or "")
+        logging.info("[RAG-BE] should_use_web_search(%s) = %s", question, use_web_search)
+    except Exception as e:
+        logging.warning("[RAG-BE] should_use_web_search 체크 중 오류: %s", e)
+
+    try:
+        response = openai_client.responses.create(
+            model=OPENAI_RESPONSES_MODEL,
+            input=prompt,
+            tools=[{"type": "web_search"}],  # web_search만 켜두고
+            # ❌ tool_choice는 넘기지 않는다 (auto)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM 호출 실패: {e}",
+        ) from e
+
+    text = getattr(response, "output_text", None)
+
+    if not text:
         try:
-            # 잘못된 입력으로 인한 예외를 방지하기 위해 수치 변환 시 예외를 처리함
-            # 기본 온도를 0.35로 맞춰 창의적 통찰 섹션의 다양성을 확보하면서도 문서 근거 중심 답변을 유지하려는 균형을 문서화함
-            # (필요 시 OPENAI_CHAT_TEMPERATURE 환경 변수로 창의성과 사실성의 균형을 세밀하게 조정할 수 있음)
-            temperature = float(os.getenv("OPENAI_CHAT_TEMPERATURE", "0.35"))
-        except ValueError:
-            # 환경 변수 파싱 실패 시에도 동일한 기본값을 사용하도록 예외 처리를 수행함
-            temperature = 0.35
+            output = getattr(response, "output", None)
+            if output and len(output) > 0:
+                first = output[0]
+                content_list = getattr(first, "content", None)
+                if content_list:
+                    first_content = content_list[0]
+                    text = getattr(first_content, "text", None)
+        except Exception:
+            text = None
 
-        # 실제 LLM 호출 객체를 생성 (base_url 은 선택적으로 주입)
-        llm_kwargs: Dict[str, Any] = {"model": model, "temperature": temperature, "api_key": api_key}
-        if base_url:
-            llm_kwargs["base_url"] = base_url
+    if not text:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM 응답에서 텍스트를 추출하지 못했습니다.",
+        )
 
-        llm = ChatOpenAI(**llm_kwargs)
-        response = llm.invoke(messages)
-        return (response.content or "").strip() or "답변을 생성하지 못했습니다."
-
-    # 현재는 OpenAI 만 지원하므로 다른 공급자가 들어오면 명시적으로 오류 반환
-    raise HTTPException(status_code=500, detail=f"지원하지 않는 LLM_PROVIDER: {provider}")
+    return text.strip()
 
 
 # -----------------------------
 # 파일별 텍스트 추출 유틸
 # -----------------------------
+
+
 def _extract_text_txt_like_bytes(content: bytes) -> str:
-    # 바이너리 → UTF-8 정규화 (한국어 깨짐 방지)
     return to_utf8_text(content)
+
 
 def _extract_text_pdf(path: Path) -> str:
     import fitz  # PyMuPDF
@@ -412,78 +491,77 @@ def _extract_text_pdf(path: Path) -> str:
             out.append(page.get_text("text"))
     return "\n".join(out)
 
+
 def _iter_block_items(parent):
     """docx 문서/셀에서 단락과 표를 순서대로 순회하기 위한 유틸 함수"""
 
-    from docx.oxml.table import CT_Tbl  # 표 요소 식별을 위해 임포트
-    from docx.oxml.text.paragraph import CT_P  # 단락 요소 식별을 위해 임포트
-    from docx.table import _Cell, Table  # 셀/표 객체 타입 비교를 위해 임포트
-    from docx.text.paragraph import Paragraph  # 단락 객체 생성을 위해 임포트
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import _Cell, Table
+    from docx.text.paragraph import Paragraph
 
-    # Document 인스턴스는 body, Cell 은 _tc 를 통해 하위 요소를 조회함
     parent_elm = parent._tc if isinstance(parent, _Cell) else parent.element.body
     for child in parent_elm.iterchildren():
         if isinstance(child, CT_P):
-            yield Paragraph(child, parent)  # 단락은 Paragraph 객체로 감싸 반환함
+            yield Paragraph(child, parent)
         elif isinstance(child, CT_Tbl):
-            yield Table(child, parent)  # 표 요소는 Table 객체로 변환해 반환함
+            yield Table(child, parent)
 
 
 def _collect_table_text(table, out_lines: List[str]) -> None:
     """docx 표를 순회하며 셀 텍스트를 라인으로 변환해 누적"""
 
-    from docx.text.paragraph import Paragraph  # 셀 내부 단락 텍스트 접근용 임포트
-    from docx.table import Table  # 중첩 표 판별을 위해 임포트
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
 
     for row in table.rows:
-        row_texts: List[str] = []  # 한 행의 셀 텍스트를 저장해 가독성 있게 결합함
+        row_texts: List[str] = []
         for cell in row.cells:
-            cell_fragments: List[str] = []  # 셀 내부 단락/중첩 표 텍스트를 모음
+            cell_fragments: List[str] = []
             for item in _iter_block_items(cell):
                 if isinstance(item, Paragraph):
                     text = item.text.strip()
                     if text:
-                        cell_fragments.append(text)  # 셀 내 단락 텍스트를 모음
+                        cell_fragments.append(text)
                 elif isinstance(item, Table):
-                    _collect_table_text(item, out_lines)  # 중첩 표는 재귀로 처리함
+                    _collect_table_text(item, out_lines)
             cell_text = " ".join(cell_fragments).strip()
             if cell_text:
-                row_texts.append(cell_text)  # 공백 제거 후 남은 텍스트만 행에 추가함
+                row_texts.append(cell_text)
         if row_texts:
-            out_lines.append(" | ".join(row_texts))  # 행 전체를 파이프 구분자로 한 줄에 기록함
+            out_lines.append(" | ".join(row_texts))
+
 
 def _extract_text_docx(path: Path) -> str:
-    from docx import Document as Docx  # DOCX 파일 열람을 위해 임포트
-    from docx.table import Table  # 블록이 표인지 판별하기 위한 임포트
-    from docx.text.paragraph import Paragraph  # 블록이 단락인지 판별하기 위한 임포트
+    from docx import Document as Docx
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
-    doc = Docx(str(path))  # 업로드된 DOCX 파일을 메모리로 로드함
-    lines: List[str] = []  # 추출된 텍스트 조각을 순서대로 누적할 리스트를 준비함    
+    doc = Docx(str(path))
+    lines: List[str] = []
 
     for block in _iter_block_items(doc):
         if isinstance(block, Paragraph):
             text = block.text.strip()
             if text:
-                lines.append(text)  # 표 밖의 단락 텍스트를 그대로 누적함
+                lines.append(text)
         elif isinstance(block, Table):
-            _collect_table_text(block, lines)  # 표는 행 단위 텍스트로 변환해 누적함
+            _collect_table_text(block, lines)
 
-    return "\n".join(lines)  # 문서 순서를 유지한 채 줄바꿈으로 합쳐 반환함
+    return "\n".join(lines)
+
 
 def _shape_texts(shape) -> List[str]:
     """python-pptx shape 에서 텍스트/테이블 텍스트 추출"""
     texts: List[str] = []
 
-    # 텍스트 프레임
     if hasattr(shape, "has_text_frame") and shape.has_text_frame:
         try:
             for para in shape.text_frame.paragraphs:
-                # run 기반 결합 (굵게/색상 등 스타일 분할 보정)
                 texts.append("".join(run.text for run in para.runs) or (para.text or ""))
         except Exception:
             pass
 
-    # 테이블
     if hasattr(shape, "has_table") and shape.has_table:
         try:
             tbl = shape.table
@@ -498,7 +576,6 @@ def _shape_texts(shape) -> List[str]:
         except Exception:
             pass
 
-    # 그룹(중첩)
     if hasattr(shape, "shapes"):
         try:
             for s in shape.shapes:
@@ -508,19 +585,22 @@ def _shape_texts(shape) -> List[str]:
 
     return [t for t in texts if t and t.strip()]
 
+
 def _extract_text_pptx(path: Path) -> str:
-    """슬라이드 본문 + 노트 + 테이블 텍스트까지 추출"""
     from pptx import Presentation
+
     prs = Presentation(str(path))
     out = []
     for idx, slide in enumerate(prs.slides, start=1):
         slide_buf = [f"[Slide {idx}]"]
-        # 본문
         for shape in slide.shapes:
             slide_buf.extend(_shape_texts(shape))
-        # 노트
         try:
-            if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
+            if (
+                slide.has_notes_slide
+                and slide.notes_slide
+                and slide.notes_slide.notes_text_frame
+            ):
                 notes_texts = [
                     p.text
                     for p in slide.notes_slide.notes_text_frame.paragraphs
@@ -534,9 +614,10 @@ def _extract_text_pptx(path: Path) -> str:
         out.append("\n".join(slide_buf))
     return "\n\n".join(out)
 
+
 def _extract_text_xlsx(path: Path, max_rows_per_sheet: int = 2000) -> str:
-    """경량 XLSX 텍스트 추출(표/시트 주요 텍스트). 대용량 방지 위해 상한 적용."""
     from openpyxl import load_workbook
+
     wb = load_workbook(filename=str(path), read_only=True, data_only=True)
     out: List[str] = []
     for ws in wb.worksheets:
@@ -558,7 +639,9 @@ def _extract_text_xlsx(path: Path, max_rows_per_sheet: int = 2000) -> str:
             rows += 1
     return "\n".join(out)
 
+
 SUPPORTED_EXTS = {".txt", ".csv", ".log", ".md", ".pdf", ".docx", ".pptx", ".xlsx"}
+
 
 def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
     ext = dst.suffix.lower()
@@ -574,26 +657,21 @@ def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
         return _extract_text_xlsx(dst)
     raise HTTPException(status_code=400, detail=f"지원하지 않는 확장자: {ext}")
 
-# -----------------------------
-# FastAPI
-# -----------------------------
-# 서버 시작 시 .env를 메모리로 불러오려는 목적
-load_dotenv()
 
-# 템플릿과 정적 리소스 경로 계산을 위해 모듈 기준 디렉터리를 미리 구함
-BASE_DIR = Path(__file__).parent  # 현재 파일 기준 디렉터리를 재사용하기 위해 상수로 정의함
+# -----------------------------
+# FastAPI 앱 설정
+# -----------------------------
+
+BASE_DIR = Path(__file__).parent
 
 app = FastAPI()
 app.include_router(admin_router)
 
-# Jinja 템플릿 로더를 초기화하여 HTML 기반의 간단한 챗 인터페이스를 제공함
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-def _check_llm_status() -> tuple[bool, Optional[str]]:
-    """LLM 공급자 준비 상태를 확인해 문제를 조기에 노출"""
 
+def _check_llm_status() -> tuple[bool, Optional[str]]:
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    # 현재는 OpenAI만 지원하므로 공급자가 다른 경우 바로 에러 메시지를 반환함
     if provider != "openai":
         return False, f"지원하지 않는 LLM_PROVIDER: {provider}"
 
@@ -611,24 +689,19 @@ def _check_llm_status() -> tuple[bool, Optional[str]]:
     tags=["health"],
 )
 async def rag_health() -> RagHealthResponse:
-    """LLM·임베딩·벡터스토어 설정을 한 번에 점검하는 헬스 엔드포인트"""
-
     llm_ready, llm_error = _check_llm_status()
 
-    # 임베딩 백엔드 상태는 기존 관리자 API와 동일한 헬퍼를 사용해 조회함
     try:
         embedding_info = get_embedding_backend_info_dict(force_refresh=True)
     except Exception as exc:
         embedding_info = {"error": str(exc), "resolved_backend": None}
 
-    # Chroma의 영속 경로와 현재 컬렉션 이름을 간단히 반환해 운영자가 위치를 바로 파악하도록 함
     chroma_dir, collection_name = get_chroma_settings()
-    chroma_summary = {
+    chroma_summary: Dict[str, Any] = {
         "persistPath": chroma_dir,
         "collection": collection_name,
     }
     try:
-        # 실제 연결 여부를 확인하기 위해 카운트 조회를 시도함
         vectordb = get_vectordb(get_embedding_fn())
         chroma_summary["count"] = vectordb._collection.count()
     except Exception as exc:
@@ -645,33 +718,29 @@ async def rag_health() -> RagHealthResponse:
         chroma=chroma_summary,
     )
 
+
 @app.get("/", response_class=HTMLResponse, summary="웹 챗 인터페이스", tags=["ui"])
 async def chat_ui(request: Request) -> HTMLResponse:
-    """Swagger 대신 실제 채팅 화면에서 RAG 답변을 체험할 수 있는 엔드포인트"""
-
-    # 템플릿 렌더링에 필요한 request 컨텍스트만 전달하면 정적 HTML/JS가 로드됨
     return templates.TemplateResponse("chat.html", {"request": request})
+
 
 @app.post("/upload")
 async def upload(
-    file: UploadFile = File(...),  # 업로드된 파일을 그대로 유지함
-    doc_id: Optional[str] = Form(default=None, alias="docId"),  # 업로드 요청에서 문서 ID를 선택적으로 받아 alias를 지정함
+    file: UploadFile = File(...),
+    doc_id: Optional[str] = Form(default=None, alias="docId"),
 ):
     try:
-        # 1) 업로드 파일 저장 (절대경로 고정)
         uploads_dir = (Path(__file__).parent / "uploads").resolve()
         uploads_dir.mkdir(parents=True, exist_ok=True)
         dst = uploads_dir / file.filename
 
         content: bytes = await file.read()
-        # (선택) 50MB 제한
         max_bytes = 50 * 1024 * 1024
         if len(content) > max_bytes:
             raise HTTPException(status_code=413, detail=f"파일이 너무 큽니다(최대 50MB). size={len(content)}")
 
         dst.write_bytes(content)
 
-        # 2) 텍스트 추출
         ext = dst.suffix.lower()
         if ext not in SUPPORTED_EXTS:
             raise HTTPException(400, f"지원하지 않는 확장자: {ext}")
@@ -679,7 +748,6 @@ async def upload(
         if not text.strip():
             raise HTTPException(400, "본문이 비어 있습니다.")
 
-        # 3) 청킹 - 업로드 전용 청킹 규칙을 명시적으로 변수에 담아 가독성을 높인다
         chunk_size = DEFAULT_CHUNK_SIZE
         chunk_overlap = DEFAULT_CHUNK_OVERLAP
         docs = chunk_single_document(
@@ -693,22 +761,20 @@ async def upload(
             overlap=chunk_overlap,
         )
 
-        # 4) 벡터DB 업서트 + persist()
         emb = get_embedding_fn()
-        vectordb = get_vectordb(emb)  # 업서트 전에 사용할 벡터 DB 핸들을 준비함
-        # 재업로드 시 기존 청크를 정리하기 위한 메타데이터 필터를 구성함
+        vectordb = get_vectordb(emb)
+
         deletion_filter = {"docId": doc_id} if doc_id else {"source": file.filename}
-        deleted_chunks = 0  # 삭제된 청크 수를 추적해 중복 제거 여부를 확인하기 위한 카운터
+        deleted_chunks = 0
         try:
             existing = vectordb._collection.get(
                 where=deletion_filter,
                 include=[],
-            )  # 삭제 전에 일치하는 청크가 실제로 존재하는지 확인해 불필요한 delete 호출을 피함
+            )
             existing_ids = existing.get("ids") if isinstance(existing, dict) else None
-            matched_ids = existing_ids or []  # None 대비 기본값으로 빈 리스트를 사용함
+            matched_ids = existing_ids or []
 
             if matched_ids:
-                # 실제로 삭제할 대상이 있을 때에만 delete 를 수행해 헤더 파일 누락 오류를 방지함
                 delete_result = vectordb._collection.delete(where=deletion_filter)
                 if isinstance(delete_result, dict):
                     deleted_chunks = len(delete_result.get("ids") or [])
@@ -722,26 +788,22 @@ async def upload(
                 deleted_chunks,
             )
         except Exception as delete_exc:
-            # 삭제 과정에서 오류가 발생하면 업로드를 중단하고 클라이언트에게 오류를 알림
-            logger.exception(
-                "기존 청크 삭제 중 오류 발생 filter=%s", deletion_filter
-            )
+            logger.exception("기존 청크 삭제 중 오류 발생 filter=%s", deletion_filter)
             raise HTTPException(
                 status_code=500,
                 detail="기존 문서를 삭제하지 못해 업로드를 중단합니다.",
             ) from delete_exc
-                
-        chroma_dir, collection_name = get_chroma_settings()  # 현재 사용 중인 Chroma 경로와 컬렉션 이름을 함께 확인함                  
 
-        # 디버그: add/persist 전후 카운트
+        chroma_dir, collection_name = get_chroma_settings()
+
         try:
             count_before = vectordb._collection.count()
         except Exception:
             count_before = None
 
         try:
-            vectordb.add_documents(docs)  # 준비한 문서 청크들을 벡터 DB에 추가
-            vectordb.persist()  # 디스크에 변경 사항을 영속화
+            vectordb.add_documents(docs)
+            vectordb.persist()
         except ValueError as err:
             message = str(err)
             if "does not match collection dimensionality" in message:
@@ -750,32 +812,32 @@ async def upload(
                     "새로운 임베딩 모델을 사용할 때는 `python wipe_chroma.py`로 "
                     "기존 컬렉션을 초기화하거나 `CHROMA_COLLECTION` 환경 변수를 "
                     "변경해 다른 컬렉션을 사용해야 합니다."
-                )  # 차원 불일치 시 사용자가 수행해야 할 조치를 안내
+                )
                 logger.error("Chroma dimension mismatch detected: %s", message)
                 logger.warning(
                     "기존 컬렉션 %s(%s)을 삭제하고 새 임베딩으로 재시도합니다.",
                     collection_name,
                     chroma_dir,
-                )  # 운영자가 상황을 파악할 수 있도록 자동 복구 절차를 로그로 남김
+                )
                 try:
-                    reset_collection()  # 차원 불일치를 야기한 기존 컬렉션을 삭제하여 깨끗한 상태로 만든다
-                    vectordb = get_vectordb(emb)  # 삭제 이후 동일한 임베딩으로 새 컬렉션을 다시 연다
-                    chroma_dir, collection_name = get_chroma_settings()  # 삭제 결과 반영된 최신 정보를 다시 조회한다
-                    count_before = 0  # 새로 만들어진 컬렉션이므로 기존 카운트는 0으로 재설정한다
-                    vectordb.add_documents(docs)  # 다시 문서를 업서트하여 업로드를 계속 진행한다
-                    vectordb.persist()  # 재시도한 데이터를 디스크에 영속화한다
+                    reset_collection()
+                    vectordb = get_vectordb(emb)
+                    chroma_dir, collection_name = get_chroma_settings()
+                    count_before = 0
+                    vectordb.add_documents(docs)
+                    vectordb.persist()
                     logger.info(
                         "Chroma 컬렉션 %s 재생성 후 업로드를 완료했습니다.",
                         collection_name,
-                    )  # 자동 복구가 성공했음을 알리는 로그를 남김
+                    )
                 except Exception as retry_exc:
                     logger.exception("Chroma 컬렉션 자동 초기화 재시도 실패")
                     raise HTTPException(
                         status_code=500,
                         detail=f"ingest failed: {message}. {hint}",
-                    ) from retry_exc  # 자동 복구에도 실패한 경우 명시적으로 안내
+                    ) from retry_exc
             else:
-                raise  # 다른 ValueError는 기존 처리 흐름으로 전달
+                raise
 
         try:
             count_after = vectordb._collection.count()
@@ -788,7 +850,6 @@ async def upload(
             f"(count {count_before} → {count_after})"
         )
 
-        # 5) 바로 관리뷰 링크 반환
         return {
             "ok": True,
             "file": file.filename,
@@ -798,7 +859,7 @@ async def upload(
             "count_before": count_before,
             "count_after": count_after,
             "view": "/admin/rag/view?limit=50&offset=0",
-            "docId": doc_id,  # 응답에 실제 저장된 docId 값을 포함해 호출자가 확인하도록 함
+            "docId": doc_id,
         }
 
     except HTTPException as http_exc:
@@ -806,15 +867,18 @@ async def upload(
             "업로드 요청이 실패했습니다 status=%s detail=%s",
             http_exc.status_code,
             http_exc.detail,
-        )  # FastAPI 로그에 실패 사유를 남겨 운영 시점에 원인을 바로 추적할 수 있도록 함
+        )
         raise
     except Exception as e:
-        logger.exception(
-            "업로드 처리 중 예상치 못한 오류가 발생했습니다"
-        )  # 미처 처리하지 못한 예외는 전체 스택을 기록해 디버깅 단서를 확보함
+        logger.exception("업로드 처리 중 예상치 못한 오류가 발생했습니다")
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
 
-# 문서 관련 질의 응답 
+
+# -----------------------------
+# RAG 검색 / 생성 엔드포인트
+# -----------------------------
+
+
 @app.post(
     "/query/retrieve",
     response_model=RetrieveResponse,
@@ -822,8 +886,6 @@ async def upload(
     tags=["rag"],
 )
 async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
-    """문서 검색 단계만 수행하여 컨텍스트와 매치 목록을 반환"""
-
     try:
         metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
 
@@ -833,7 +895,7 @@ async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
             metadata_filter=metadata_filter,
         )
 
-        context_chunks, context_text, _has_docs = _prepare_prompt_context(docs)  # 검색 유무는 응답 구성에 필요 없으므로 언더스코어 변수로 받는다
+        context_chunks, context_text, _has_docs = _prepare_prompt_context(docs)
 
         matches = [
             Match(
@@ -863,16 +925,28 @@ async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
     tags=["rag"],
 )
 async def query_generate(payload: GenerateRequest) -> GenerateResponse:
-    """검색된 컨텍스트를 기반으로 LLM 답변만 생성"""
-
+    """
+    검색된 컨텍스트를 기반으로 LLM 답변만 생성.
+    (OpenAI Responses + web_search 사용)
+    """
     try:
-        has_context = bool(payload.context.strip())  # 컨텍스트가 비어 있으면 일반 대화 모드로 전환하기 위한 플래그
-        answer_text = _generate_answer(payload.question, payload.context, has_context=has_context)
+        base_context = (payload.context or "").strip()
+        has_context = bool(base_context)
+
+        answer_text = _generate_answer(
+            payload.question,
+            base_context,
+            has_context=has_context,
+        )
+
         return GenerateResponse(answer=answer_text)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("[QUERY_GENERATE][FATAL] q=%s err=%s", payload.question, e)
         raise HTTPException(status_code=500, detail=f"generate failed: {e}")
+
+
 @app.post(
     "/query",
     response_model=QueryResponse,
@@ -880,24 +954,18 @@ async def query_generate(payload: GenerateRequest) -> GenerateResponse:
     tags=["rag"],
 )
 async def query(payload: QueryRequest) -> QueryResponse:
-    """문서 검색 후 LLM을 호출하여 최종 답변을 반환"""
-
     try:
-        # docId 필터가 전달된 경우 retriever 팩토리가 이해할 수 있도록 metadata_filter 로 변환한다
         metadata_filter = {"docId": payload.doc_id} if payload.doc_id else None
-         
-        # rag_service.query_text 를 통해 검색 전략/파라미터 구성을 일관되게 재사용한다
+
         docs = _run_retrieval_with_recovery(
             question=payload.question,
             top_k=payload.top_k,
             metadata_filter=metadata_filter,
-        )            
+        )
 
-        # 프롬프트와 응답에서 동일한 라벨과 메타데이터를 쓰기 위해 컨텍스트를 한 번만 가공한다
         context_chunks, context_text, has_docs = _prepare_prompt_context(docs)
 
-        # 검색된 청크 정보를 응답에 포함시키되 UX 에 필요한 부가 필드를 함께 전달한다                
-        matches = [        
+        matches = [
             Match(
                 reference=chunk.reference,
                 chunk_index=chunk.chunk_index,
@@ -910,36 +978,35 @@ async def query(payload: QueryRequest) -> QueryResponse:
             for chunk in context_chunks
         ]
 
-        # LLM 에 전달할 컨텍스트 텍스트를 재사용하여 최종 답변을 생성한다
-        # 검색 결과가 없으면 일반 대화 프롬프트로 전환해 일상 질문에도 답하도록 함
         answer_text = _generate_answer(payload.question, context_text, has_context=has_docs)
 
         return QueryResponse(answer=answer_text, matches=matches)
 
     except HTTPException:
-        # 이미 정의된 에러는 그대로 전파
         raise
     except Exception as e:
-        # 예기치 못한 오류는 서버 오류로 감싸서 전달
         raise HTTPException(status_code=500, detail=f"query failed: {e}")
+
+
+# -----------------------------
+# 문서 삭제
+# -----------------------------
+
 
 @app.post("/documents/delete")
 async def delete_documents(payload: DocDeleteRequest):
     """문서 UUID 또는 파일명을 기준으로 벡터 DB와 업로드 파일을 정리"""
 
     try:
-        # 업로드 시점과 동일한 임베딩 설정을 불러와 동일한 컬렉션에 접근한다.
         embedding_fn = get_embedding_fn()
         vectordb = get_vectordb(embedding_fn)
-        collection = vectordb._collection  # delete(where=...) 호출을 위해 내부 컬렉션 객체를 그대로 사용한다.
+        collection = vectordb._collection
 
-        # docId 가 존재하면 docId 기준으로, 없으면 source 기준으로 where 절을 구성한다.
         if payload.doc_id:
             where: Dict[str, Any] = {"docId": payload.doc_id}
         else:
             where = {"source": payload.source}
 
-        # 삭제 대상 청크의 메타데이터를 먼저 모아서 삭제 건수와 관련 파일명을 파악한다.
         matched = collection.get(where=where, include=["metadatas"])
         matched_ids = matched.get("ids") or []
         metadatas = matched.get("metadatas") or []
@@ -949,17 +1016,15 @@ async def delete_documents(payload: DocDeleteRequest):
             if meta and (meta.get("source") is not None)
         }
 
-        # 동일한 where 조건으로 청크가 존재할 때만 삭제를 수행해 빈 인덱스에서 발생하는 오류를 막는다.
         if matched_ids:
             collection.delete(where=where)
-            vectordb.persist()  # 변경된 상태를 디스크에 즉시 반영해 일관성을 유지한다.
+            vectordb.persist()
         else:
             logger.info(
                 "삭제 요청과 일치하는 청크가 없어 delete 작업을 건너뜁니다. filter=%s",
                 where,
-            )  # 삭제할 항목이 없는 경우에도 상황을 기록해 문제 추적을 돕는다.
+            )
 
-        # 업로드 폴더에 남아있는 원본 파일도 함께 제거한다.
         uploads_dir = (Path(__file__).parent / "uploads").resolve()
         file_results: List[Dict[str, Any]] = []
         for file_name in sorted(s for s in sources if s):
@@ -990,3 +1055,104 @@ async def delete_documents(payload: DocDeleteRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"delete failed: {exc}")
+
+
+# -----------------------------
+# (선택) 외부 웹 검색 API를 붙이고 싶다면
+# 아래에 helper를 추가해서 `_build_openai_prompt`에 합치거나
+# `/query/generate`에서 context 병합을 해도 된다.
+# 현재 버전은 OpenAI의 web_search tool만 사용.
+# -----------------------------
+
+
+# 예시용 변수(지금은 사용하지 않음)
+WEB_SEARCH_ENDPOINT = os.getenv("WEB_SEARCH_ENDPOINT")
+WEB_SEARCH_API_KEY = os.getenv("WEB_SEARCH_API_KEY")
+
+
+def should_use_web_search(question: str) -> bool:
+    """
+    필요하다면 이 함수를 사용해 외부 검색 API 여부를 판단해서
+    build_web_search_context와 합쳐서 쓸 수 있음.
+    (현재는 OpenAI web_search tool만 사용하므로 미사용)
+    """
+    q = (question or "").lower()
+    time_keywords = ["현재", "지금", "요즘", "최신", "최근", "오늘", "어제", "이번 주", "이번주"]
+    live_keywords = [
+        "환율",
+        "달러",
+        "usd",
+        "주가",
+        "비트코인",
+        "코스피",
+        "나스닥",
+        "금리",
+        "부동산",
+        "집값",
+        "날씨",
+        "기온",
+        "뉴스",
+        "이슈",
+        "사건",
+        "사고",
+        "선거",
+        "투표율",
+        "경기 결과",
+        "스코어",
+    ]
+    return any(kw in q for kw in time_keywords + live_keywords)
+
+
+async def build_web_search_context(question: str, max_results: int = 5) -> str:
+    """
+    외부 검색엔진을 쓰고 싶을 때만 구현해서 사용.
+    현재 로직에서는 호출하지 않음.
+    """
+    if not WEB_SEARCH_ENDPOINT or not WEB_SEARCH_API_KEY:
+        return ""
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                WEB_SEARCH_ENDPOINT,
+                params={
+                    "q": question,
+                    "num": max_results,
+                    "api_key": WEB_SEARCH_API_KEY,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        logger.warning("[WEB_SEARCH][ERROR] q=%s err=%s", question, e)
+        return ""
+
+    items = data.get("results") or data.get("items") or []
+
+    lines: List[str] = []
+    for idx, item in enumerate(items[:max_results], start=1):
+        title = (item.get("title") or "").strip()
+        url = (item.get("url") or item.get("link") or "").strip()
+        snippet = (
+            item.get("snippet")
+            or item.get("summary")
+            or item.get("description")
+            or ""
+        ).strip()
+
+        if not (title or snippet):
+            continue
+
+        line = f"[검색결과 {idx}] {title}\n"
+        if url:
+            line += f"URL: {url}\n"
+        if snippet:
+            line += f"요약: {snippet}"
+        lines.append(line)
+
+    if not lines:
+        return ""
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = f"[웹 검색 결과]\n- 조회 시각: {now} (서버 기준)\n"
+    return header + "\n\n" + "\n\n".join(lines)
