@@ -569,7 +569,7 @@ public class DocumentServiceImpl implements DocumentService {
                     .bodyToMono(ResponsesPayload.class)
                     .block(Duration.ofSeconds(60));
 
-            String answer = response != null ? response.outputText() : null;
+            String answer = extractWebSearchAnswer(response);
             if (StringUtils.hasText(answer)) {
                 return answer;
             }
@@ -581,9 +581,36 @@ public class DocumentServiceImpl implements DocumentService {
         return null;
     }
 
-    private record ResponsesPayload(@JsonProperty("output_text") String outputText) {
+    private String extractWebSearchAnswer(ResponsesPayload response) {
+        if (response == null) {
+            return null;
+        }
+        if (StringUtils.hasText(response.outputText())) {
+            return response.outputText();
+        }
+        return Optional.ofNullable(response.output())
+                .flatMap(outputs -> outputs.stream()
+                        .map(ResponseOutput::content)
+                        .filter(Objects::nonNull)
+                        .flatMap(Collection::stream)
+                        .map(ResponseContent::text)
+                        .filter(StringUtils::hasText)
+                        .findFirst())
+                .orElse(null);
     }
-        
+
+    private record ResponsesPayload(
+            @JsonProperty("output_text") String outputText,
+            List<ResponseOutput> output
+    ) {
+    }
+
+    private record ResponseOutput(List<ResponseContent> content) {
+    }
+
+    private record ResponseContent(String text) {
+    }
+
     /** GPT 호출 없이도 질문 유형에 맞춰 바로 줄 수 있는 안내 */
     private String buildAdaptiveGuidance(String question) {
         String subject = (question == null || question.isBlank())
