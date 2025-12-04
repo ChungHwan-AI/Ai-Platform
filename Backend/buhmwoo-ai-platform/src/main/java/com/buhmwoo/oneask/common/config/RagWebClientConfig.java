@@ -18,7 +18,7 @@ public class RagWebClientConfig {
     /**
      * RAG 백엔드 통신 전용 WebClient 빈을 생성합니다. // ✅ 통합된 네트워크 설정을 통해 재사용성을 높임을 명시합니다.
      */
-    @Bean // ✅ 생성된 WebClient를 스프링 컨테이너에 등록합니다.
+    @Bean("ragWebClient") // ✅ 생성된 WebClient를 스프링 컨테이너에 등록합니다.
     public WebClient ragWebClient() {
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofSeconds(120)); // ✅ 대용량 응답을 안정적으로 받을 수 있도록 타임아웃을 확장합니다.
@@ -30,4 +30,17 @@ public class RagWebClientConfig {
                         .build())
                 .build();
     }
+
+    @Bean("openAiWebClient")
+    public WebClient openAiWebClient() {
+        HttpClient httpClient = HttpClient.create()
+                .responseTimeout(Duration.ofSeconds(120));
+
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .exchangeStrategies(ExchangeStrategies.builder()
+                        .codecs(codec -> codec.defaultCodecs().maxInMemorySize(64 * 1024 * 1024))
+                        .build())
+                .build();
+    }    
 }

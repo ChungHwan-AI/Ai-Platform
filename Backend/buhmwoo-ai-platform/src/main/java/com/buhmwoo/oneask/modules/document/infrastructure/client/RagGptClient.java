@@ -6,6 +6,7 @@ import com.buhmwoo.oneask.modules.document.application.question.GptRequest;
 import com.buhmwoo.oneask.modules.document.application.question.GptResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -24,7 +25,7 @@ public class RagGptClient implements GptClient {
     private final OneAskProperties props;
     private final WebClient ragWebClient;
 
-    public RagGptClient(OneAskProperties props, WebClient ragWebClient) {
+    public RagGptClient(OneAskProperties props, @Qualifier("ragWebClient") WebClient ragWebClient) {
         this.props = props;
         this.ragWebClient = ragWebClient;
     }

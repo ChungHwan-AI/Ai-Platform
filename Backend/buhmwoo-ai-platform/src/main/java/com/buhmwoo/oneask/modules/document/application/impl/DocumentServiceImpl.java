@@ -22,6 +22,7 @@ import com.buhmwoo.oneask.modules.document.application.question.RetrievedDocumen
 import com.buhmwoo.oneask.modules.document.domain.Document;
 import com.buhmwoo.oneask.modules.document.domain.DocumentIndexingStatus;
 import com.buhmwoo.oneask.modules.document.infrastructure.repository.maria.DocumentRepository;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -32,6 +33,7 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -70,11 +72,12 @@ public class DocumentServiceImpl implements DocumentService {
 
     private final DocumentRepository documentRepository;
     private final OneAskProperties props;
-    private final WebClient ragWebClient;
+    private final @Qualifier("ragWebClient") WebClient ragWebClient;
     private final DocumentRetriever documentRetriever;
     private final GptClient gptClient;
     private final QuestionIntentClassifier intentClassifier;
     private final QuestionAnswerCache questionAnswerCache;
+    private final @Qualifier("openAiWebClient") WebClient openAiWebClient;
 
     private static final int DEFAULT_TOP_K = 4;
     private static final double DEFAULT_SCORE_THRESHOLD = 0.55;
@@ -270,7 +273,8 @@ public class DocumentServiceImpl implements DocumentService {
 
             // 4) GENERAL_KNOWLEDGE → 문서 검색 건너뛰고 바로 일반 지식 답변
             if (intent == QuestionIntent.GENERAL_KNOWLEDGE && mode != BotMode.STRICT) {
-                QuestionAnswerResponseDto generalAnswer = buildGeneralKnowledgeOnlyAnswer(questionText);
+                boolean allowWebSearch = mode == BotMode.HYBRID;
+                QuestionAnswerResponseDto generalAnswer = buildGeneralKnowledgeOnlyAnswer(questionText, allowWebSearch);
                 questionAnswerCache.put(docId, questionText, mode, generalAnswer);
                 return ApiResponseDto.ok(generalAnswer, "응답 성공(일반 지식)");
             }
@@ -371,8 +375,10 @@ public class DocumentServiceImpl implements DocumentService {
                     .build();
         }
 
-        // HYBRID 모드 → 그냥 ChatGPT 느낌의 일반 지식 답변만 내려보냄
-        String generalAnswer = generateGeneralKnowledgeAnswer(question);
+        boolean useWebSearch = mode == BotMode.HYBRID;
+        String generalAnswer = useWebSearch
+                ? generateHybridAnswer(question)
+                : generateGeneralKnowledgeAnswer(question);
 
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of()))
@@ -472,8 +478,8 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /** 문서 검색을 건너뛴 일반 지식 응답 */
-    private QuestionAnswerResponseDto buildGeneralKnowledgeOnlyAnswer(String question) {
-        String answer = generateGeneralKnowledgeAnswer(question);
+    private QuestionAnswerResponseDto buildGeneralKnowledgeOnlyAnswer(String question, boolean allowWebSearch) {
+        String answer = allowWebSearch ? generateHybridAnswer(question) : generateGeneralKnowledgeAnswer(question);
 
         return QuestionAnswerResponseDto.builder()
                 .title(buildAnswerTitle(question, List.of()))
@@ -532,6 +538,52 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    private String generateHybridAnswer(String question) {
+        String webSearchAnswer = tryWebSearchAnswer(question);
+        if (StringUtils.hasText(webSearchAnswer)) {
+            return webSearchAnswer;
+        }
+        return generateGeneralKnowledgeAnswer(question);
+    }
+
+    private String tryWebSearchAnswer(String question) {
+        OneAskProperties.OpenAi openAi = props.getOpenai();
+        if (openAi == null || !StringUtils.hasText(openAi.getApiKey())) {
+            log.warn("[WEB_SEARCH] OpenAI API 키가 설정되지 않아 웹검색을 건너뜁니다.");
+            return null;
+        }
+
+        String model = StringUtils.hasText(openAi.getModel()) ? openAi.getModel() : "gpt-4.1-mini";
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("model", model);
+        payload.put("input", question);
+        payload.put("tools", List.of(Map.of("type", "web_search")));
+
+        try {
+            ResponsesPayload response = openAiWebClient.post()
+                    .uri("https://api.openai.com/v1/responses")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + openAi.getApiKey())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(payload)
+                    .retrieve()
+                    .bodyToMono(ResponsesPayload.class)
+                    .block(Duration.ofSeconds(60));
+
+            String answer = response != null ? response.outputText() : null;
+            if (StringUtils.hasText(answer)) {
+                return answer;
+            }
+            log.warn("[WEB_SEARCH] 응답이 비어 있어 일반 지식 모드로 대체합니다.");
+        } catch (Exception e) {
+            log.warn("[WEB_SEARCH] 호출 실패: {}", e.toString(), e);
+        }
+
+        return null;
+    }
+
+    private record ResponsesPayload(@JsonProperty("output_text") String outputText) {
+    }
+        
     /** GPT 호출 없이도 질문 유형에 맞춰 바로 줄 수 있는 안내 */
     private String buildAdaptiveGuidance(String question) {
         String subject = (question == null || question.isBlank())
