@@ -107,21 +107,9 @@ PROMPT_HUMAN_TEMPLATE = (
 
 PROMPT_SYSTEM_GENERAL = (
     "당신은 한국어로 답변하는 친절한 업무 비서입니다."
-    "\n- 질문이 환율, 주가, 비트코인, 금리, 부동산 가격, 집값, 날씨, 미세먼지, "
-    "최신 뉴스/이슈, 선거, 경기 결과/스코어 등 '시간에 따라 자주 변하는 값'에 대한 것이라면 "
-    "반드시 web_search 도구를 호출해 최신 정보를 먼저 조회한 뒤 답변하세요."
-    "\n- web_search 도구를 사용할 수 없거나 검색 결과가 비어 있을 때는, "
-    "오늘 기준의 구체적인 수치나 값을 추정해서 말하지 말고 "
-    "'실시간 데이터를 조회할 수 없어 정확한 수치를 제공하기 어렵다'고 먼저 알려주세요."
-    "\n- 특히 '현재 1달러당 원화 환율은 약 1,300원입니다. 환율은 시장 상황에 따라 변동되므로, "
-    "정확한 최신 수치는 공식 금융 기관의 자료를 참고하시기 바랍니다.'와 같은 "
-    "일반적인 문장을 자동으로 생성하지 마세요. 이 문장은 과거 평균값에 기반한 예시일 뿐이며, "
-    "실제 최신 환율을 반영하지 않습니다."
-    "\n- 그 외의 일반적인 상식/설명/조언 질문은 회사 문서와 무관하게 "
-    "당신이 가진 일반 지식과 논리를 활용해 문제를 해결하세요."
+    "\n- 회사 문서가 없더라도 일반 상식과 논리를 활용해 문제를 해결하세요."
     "\n- 사실 근거가 부족하면 추측임을 명확히 밝히고, 안전하고 책임감 있게 답하세요."
-    "\n- 사용자가 요청한 작업(요약, 번역, 일정 제안 등)을 그대로 수행하되, "
-    "너무 장황하게 설명하지 말고 핵심 위주로 간단명료하게 답변하세요."
+    "\n- 사용자가 요청한 작업(요약, 번역, 일정 제안 등)을 그대로 수행하세요."
 )
 
 PROMPT_HUMAN_GENERAL = (
@@ -134,43 +122,20 @@ PROMPT_HUMAN_GENERAL = (
 def _build_openai_prompt(question: str, context: Optional[str], has_context: bool) -> str:
     """
     OpenAI Responses API에 그대로 넘길 하나의 텍스트 프롬프트를 만든다.
-
-    - 질문에 '현재/지금/환율/주가/날씨/뉴스/경기 결과' 등 실시간/시점 관련 키워드가 포함된 경우,
-      web_search 도구를 반드시 사용하도록 추가 지침을 system 프롬프트에 붙인다.
     """
     q = (question or "").strip()
     c = (context or "").strip()
 
-    # 실시간 질문이면 web_search 강제 지침을 붙여준다.
-    extra_live_instruction = ""
-    try:
-        if should_use_web_search(q):
-            extra_live_instruction = (
-                "\n- 이 질문은 시점/실시간 정보(예: 환율, 주가, 비트코인, 금리, 부동산 가격, 날씨, "
-                "미세먼지, 최신 뉴스/이슈, 선거, 경기 결과/스코어 등)에 관한 것이므로 "
-                "반드시 web_search 도구를 최소 1회 이상 호출해 최신 정보를 조회한 뒤 답변하세요."
-                "\n- web_search를 사용하지 않고는 '오늘 기준 얼마입니다'처럼 "
-                "구체적인 수치나 날짜가 중요한 값을 추정해서 말하지 마세요."
-                "\n- web_search로도 최신 데이터를 가져오지 못한 경우에는 "
-                "'실시간 데이터를 조회할 수 없어 정확한 수치를 제공하기 어렵다'고 먼저 설명하고, "
-                "과거 평균이나 일반적인 범위를 최신 수치인 것처럼 말하지 마세요."
-            )
-    except Exception:
-        # 혹시라도 여기서 에러가 나더라도 전체 프롬프트 생성은 계속 진행되도록 방어
-        extra_live_instruction = ""
-
     if has_context and c:
         # 문서 기반 RAG 답변용
-        system = PROMPT_SYSTEM_TEXT + extra_live_instruction
+        system = PROMPT_SYSTEM_TEXT
         human = PROMPT_HUMAN_TEMPLATE.format(question=q, context=c)
     else:
-        # 일반 지식 + (필요 시) 웹 검색용
-        system = PROMPT_SYSTEM_GENERAL + extra_live_instruction
+        # 일반 지식 + 웹 검색용
+        system = PROMPT_SYSTEM_GENERAL
         human = PROMPT_HUMAN_GENERAL.format(question=q, context=c)
 
     return f"{system.strip()}\n\n{human.strip()}"
-
-
 
 
 # -----------------------------
@@ -429,20 +394,12 @@ def _generate_answer(
         )
 
     prompt = _build_openai_prompt(question, context, has_context)
-    # 참고용 로그만 남기고,
-    # 실제로 tool_choice는 넘기지 않는다 (auto 모드에 맡김).
-    try:
-        use_web_search = should_use_web_search(question or "")
-        logging.info("[RAG-BE] should_use_web_search(%s) = %s", question, use_web_search)
-    except Exception as e:
-        logging.warning("[RAG-BE] should_use_web_search 체크 중 오류: %s", e)
 
     try:
         response = openai_client.responses.create(
             model=OPENAI_RESPONSES_MODEL,
             input=prompt,
-            tools=[{"type": "web_search"}],  # web_search만 켜두고
-            # ❌ tool_choice는 넘기지 않는다 (auto)
+            tools=[{"type": "web_search"}],
         )
     except Exception as e:
         raise HTTPException(
