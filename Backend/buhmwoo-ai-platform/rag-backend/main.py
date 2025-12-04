@@ -400,6 +400,8 @@ def _generate_answer(
             model=OPENAI_RESPONSES_MODEL,
             input=prompt,
             tools=[{"type": "web_search"}],
+            # 하이브리드 모드에서는 최신 정보 반영을 위해 웹 검색을 반드시 실행하도록 강제
+            tool_choice={"type": "web_search"},            
         )
     except Exception as e:
         raise HTTPException(
