@@ -156,6 +156,7 @@ public class DocumentServiceImpl implements DocumentService {
                     .indexingError(null)
                     .build();
             documentRepository.save(doc);
+            questionAnswerCache.invalidate(null); // 신규/대체 업로드 시 전체 캐시를 비워 최신 문서를 반영합니다.
 
             // 5) 프리뷰 텍스트(선택)
             String extractedText = extractText(file);
@@ -794,6 +795,8 @@ public class DocumentServiceImpl implements DocumentService {
 
         // 3) DB 레코드 삭제
         documentRepository.delete(document);
+        questionAnswerCache.invalidate(uuid); // 삭제된 문서 관련 캐시를 제거해 재사용을 방지합니다.
+        questionAnswerCache.invalidate(null); // 전체 질의 캐시도 함께 비워 최신 상태를 반영합니다.        
 
         return ApiResponseDto.ok(result, "문서 삭제 완료");
     }

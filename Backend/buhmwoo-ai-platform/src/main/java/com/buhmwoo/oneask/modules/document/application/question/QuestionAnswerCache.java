@@ -61,6 +61,18 @@ public class QuestionAnswerCache {
         cache.put(key, new CacheEntry(stored, Instant.now().plus(TTL))); // ✅ 응답과 만료 시각을 함께 저장합니다.
     }
 
+    /**
+     * 특정 문서(또는 전체)와 연결된 캐시 엔트리를 모두 제거합니다. // ✅ 업로드/삭제 후 이전 답변이 남지 않도록 합니다.
+     */
+    public synchronized void invalidate(String docId) {
+        if (docId == null) {
+            cache.clear();
+            return;
+        }
+        String prefix = docId + "::"; // ✅ 키 규칙과 동일하게 접두어를 만들어 매칭합니다.
+        cache.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+        
     private String buildKey(String docId, String question, BotMode mode) {
         return (docId == null ? "ALL" : docId) + "::" + mode.name() + "::" + question.trim(); // ✅ 봇 모드까지 키에 포함해 캐시 충돌을 막습니다.
     }
