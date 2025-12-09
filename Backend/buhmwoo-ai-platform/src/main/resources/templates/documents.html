@@ -11,6 +11,8 @@
         .card { border: 1px solid #e2e8f0; border-radius: 14px; }
         .shadow-soft { box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07); }
         .doc-row-active { background: #eef2ff; outline: 2px solid #4f46e5; outline-offset: -1px; }
+        /* ✅ 히스토리 영역을 채팅창처럼 고정 높이와 스크롤이 가능한 형태로 만듭니다. */
+        #answerHistoryList { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; }        
         /* ✅ 질문 전송 시 사용자에게 생각 중임을 알려주는 레이어 스타일입니다. */
         .thinking-indicator { background: rgba(248, 250, 252, 0.85); border: 1px dashed #6366f1; }        
     </style>
@@ -510,7 +512,25 @@
     function loadHistory() {
         try {
             var stored = localStorage.getItem('oneaskAnswerHistory');
-            return stored ? JSON.parse(stored) : [];
+            if (!stored) return [];
+
+            var parsed = JSON.parse(stored);
+
+            // 새로운 구조({ items, order })와 기존 구조(배열)를 모두 지원합니다.
+            var items = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed.items) ? parsed.items : []);
+
+            // 기존에는 최신 순으로 저장되었으므로, 최신 항목이 아래로 내려가도록 한 번만 역순 변환합니다.
+            if (items.length >= 2) {
+                var firstTime = Date.parse(items[0].answeredAt);
+                var lastTime = Date.parse(items[items.length - 1].answeredAt);
+                if (!isNaN(firstTime) && !isNaN(lastTime) && firstTime > lastTime) {
+                    items = items.slice().reverse();
+                }
+            }
+
+            return items;
         } catch (e) {
             return [];
         }
@@ -518,7 +538,7 @@
 
     // ✅ 히스토리를 로컬 스토리지에 저장합니다.
     function saveHistory(list) {
-        localStorage.setItem('oneaskAnswerHistory', JSON.stringify(list));
+        localStorage.setItem('oneaskAnswerHistory', JSON.stringify({ items: list, order: 'ASC' }));
     }
 
     // ✅ 히스토리를 화면에 그려 사용자에게 이전 답변을 보여줍니다.
@@ -597,6 +617,8 @@
 
             container.appendChild(card);
         });
+        // 최신 항목이 항상 하단에 보이도록 스크롤을 고정합니다.
+        container.scrollTop = container.scrollHeight;        
     }
 
     // ✅ 서버 응답을 로컬 스토리지 히스토리에 누적합니다.
@@ -605,7 +627,7 @@
         if (!latestEl) return;
 
         var list = loadHistory();
-        list.unshift({
+        list.push({
             question: latestEl.dataset.question || '',
             answer: latestEl.dataset.answer || '',
             title: latestEl.dataset.title || '질문 응답',
@@ -616,8 +638,8 @@
         });
 
         // 최대 10개까지만 유지해 화면이 과도하게 길어지지 않게 합니다.
-        if (list.length > 10) {
-            list = list.slice(0, 10);
+        while (list.length > 10) {
+            list.shift();
         }
 
         saveHistory(list);
