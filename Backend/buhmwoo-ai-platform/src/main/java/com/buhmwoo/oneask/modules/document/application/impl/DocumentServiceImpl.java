@@ -47,6 +47,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -112,6 +113,13 @@ public class DocumentServiceImpl implements DocumentService {
             String originalName = Optional.ofNullable(file.getOriginalFilename()).orElse("unnamed");
             String safeName = Paths.get(originalName).getFileName().toString();
             safeName = StringUtils.cleanPath(safeName);
+            safeName = safeName
+                    .replaceAll("[\\r\\n\\t]", " ")
+                    .replaceAll("\\s+", " ")
+                    .trim();
+            if (safeName.length() > 200) {
+                safeName = safeName.substring(0, 200);
+            }            
             if (safeName.isBlank()) safeName = "unnamed";
             String uuid = UUID.randomUUID().toString();
             String storedName = uuid + "_" + safeName;
@@ -839,6 +847,14 @@ public class DocumentServiceImpl implements DocumentService {
             document.setIndexingError(null);
             documentRepository.save(document);
             return buildPreviewResponse(document, preview, successMessage);
+        } catch (WebClientResponseException ex) {
+            String ragErrorBody = ex.getResponseBodyAsString();
+            log.warn("[RAG] indexing failed uuid={} status={} body={} err={}",
+                    document.getUuid(), ex.getStatusCode(), ragErrorBody, ex.toString(), ex);
+            document.setIndexingStatus(DocumentIndexingStatus.FAILED);
+            document.setIndexingError(truncateErrorMessage(ex.getMessage() + " | body=" + ragErrorBody));
+            documentRepository.save(document);
+            return buildPreviewResponse(document, preview, failureMessage);            
         } catch (Exception ex) {
             log.warn("[RAG] indexing failed uuid={} err={}", document.getUuid(), ex.toString(), ex);
             document.setIndexingStatus(DocumentIndexingStatus.FAILED);
