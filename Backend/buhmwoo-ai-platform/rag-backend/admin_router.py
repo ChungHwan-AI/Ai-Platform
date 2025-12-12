@@ -8,7 +8,10 @@ from collections import Counter
 import logging
 
 from config_embed import get_embedding_backend_info_dict  # 임베딩 상태 조회 API 구성을 위해 임포트함
-from config_chroma import get_chroma_settings  # 동적으로 결정된 Chroma 저장 위치를 조회하기 위해 임포트함
+from config_chroma import (
+    CHROMA_CLIENT_SETTINGS,
+    get_chroma_settings,
+)  # 동적으로 결정된 Chroma 저장 위치를 조회하기 위해 임포트함
 
 import chromadb
 from chromadb import ClientAPI
@@ -21,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def get_collection() -> ClientAPI:
     chroma_dir, collection_name = get_chroma_settings()  # 현재 저장 경로와 컬렉션 이름을 동적으로 조회함
-    client = chromadb.PersistentClient(path=chroma_dir)
+    client = chromadb.PersistentClient(path=chroma_dir, settings=CHROMA_CLIENT_SETTINGS)
     try:
         # 기존 컬렉션을 그대로 불러와 LangChain이 저장한 데이터와 차원 정보를 유지한다
         col = client.get_collection(collection_name)
@@ -189,7 +192,7 @@ def wipe_collection(
 
     # 최신 컬렉션 정보를 읽어 전체 삭제를 수행한다
     chroma_dir, collection_name = get_chroma_settings()
-    client = chromadb.PersistentClient(path=chroma_dir)
+    client = chromadb.PersistentClient(path=chroma_dir, settings=CHROMA_CLIENT_SETTINGS)
 
     try:
         # 컬렉션 삭제 후에는 get_collection()이 비어 있는 컬렉션을 재생성한다
