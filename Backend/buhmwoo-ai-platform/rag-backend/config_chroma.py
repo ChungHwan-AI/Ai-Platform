@@ -104,6 +104,28 @@ def reset_collection() -> None:
             exc,
         )  # 컬렉션이 없거나 삭제 실패 시에도 기록만 남기고 흐름을 계속함
 
+def persist_vectordb_if_possible(vectordb) -> None:
+    """Chroma 버전 별로 달라진 persist 호출을 안전하게 처리"""
+
+    # langchain-chroma 0.1.x에서는 VectorStore.persist()가 제거되었으므로
+    # 메서드 존재 여부를 확인한 뒤 호출한다.
+    persist_fn = getattr(vectordb, "persist", None)
+    if callable(persist_fn):
+        try:
+            persist_fn()
+            return
+        except Exception as exc:
+            logger.warning("vectordb.persist() 호출 실패: %s", exc)
+
+    # 최신 Chroma 클라이언트는 PersistentClient(path=...)가 자동으로 저장하지만
+    # 혹시나 flush가 필요한 경우를 대비해 _client.persist()도 점검한다.
+    client = getattr(vectordb, "_client", None)
+    client_persist = getattr(client, "persist", None)
+    if callable(client_persist):
+        try:
+            client_persist()
+        except Exception as exc:
+            logger.warning("vectordb._client.persist() 호출 실패: %s", exc)
 
 def get_chroma_settings() -> tuple[str, str]:
     """현재 영속 경로와 컬렉션 이름을 한 번에 반환"""

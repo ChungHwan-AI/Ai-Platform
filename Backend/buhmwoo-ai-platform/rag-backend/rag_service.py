@@ -2,7 +2,10 @@
 from typing import List
 from langchain_core.documents import Document
 from config_embed import get_embedding_fn
-from config_chroma import get_vectordb  # LangChain Chroma 래퍼를 통해 컬렉션 핸들을 얻기 위해 임포트함
+from config_chroma import (
+    get_vectordb,
+    persist_vectordb_if_possible,
+)  # LangChain Chroma 래퍼를 통해 컬렉션 핸들을 얻기 위해 임포트함
 from retriever_factory import resolve_strategy  # 검색 전략/파라미터를 한 번만 계산해 점수 계산과 Retriever 설정을 통일하기 위해 임포트함
 from utils.chunking import (
     chunk_documents,
@@ -31,7 +34,7 @@ def ingest_texts(texts: List[str], metadatas: List[dict] | None = None) -> int:
     collection = vectordb._collection  # LangChain Chroma 래퍼에서 실제 컬렉션 핸들을 꺼내어 재사용
     docs = chunk_docs(texts, metadatas)
     vectordb.add_documents(docs)
-    vectordb.persist()
+    persist_vectordb_if_possible(vectordb)
     try:
         # 벡터 스토어가 가리키는 컬렉션에서 직접 카운트를 읽어 일관된 값을 반환한다
         return collection.count()

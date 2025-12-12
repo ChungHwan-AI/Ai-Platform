@@ -22,7 +22,12 @@ from pydantic import (
     model_validator,
 )
 
-from config_chroma import get_vectordb, get_chroma_settings, reset_collection
+from config_chroma import (
+    get_vectordb,
+    get_chroma_settings,
+    reset_collection,
+    persist_vectordb_if_possible,
+)
 from config_embed import get_embedding_fn, get_embedding_backend_info_dict
 from utils.encoding import to_utf8_text
 from utils.chunking import (
@@ -762,7 +767,7 @@ async def upload(
 
         try:
             vectordb.add_documents(docs)
-            vectordb.persist()
+            persist_vectordb_if_possible(vectordb)
         except ValueError as err:
             message = str(err)
             if "does not match collection dimensionality" in message:
@@ -784,7 +789,7 @@ async def upload(
                     chroma_dir, collection_name = get_chroma_settings()
                     count_before = 0
                     vectordb.add_documents(docs)
-                    vectordb.persist()
+                    persist_vectordb_if_possible(vectordb)
                     logger.info(
                         "Chroma 컬렉션 %s 재생성 후 업로드를 완료했습니다.",
                         collection_name,
@@ -805,7 +810,7 @@ async def upload(
 
         print(
             f"[INGEST] to {collection_name} @ {chroma_dir}, "
-            f"file={file.filename}, chunks={len(docs)} → persist() done "
+            f"file={file.filename}, chunks={len(docs)} → 저장 완료 "
             f"(count {count_before} → {count_after})"
         )
 
@@ -977,7 +982,7 @@ async def delete_documents(payload: DocDeleteRequest):
 
         if matched_ids:
             collection.delete(where=where)
-            vectordb.persist()
+            persist_vectordb_if_possible(vectordb)
         else:
             logger.info(
                 "삭제 요청과 일치하는 청크가 없어 delete 작업을 건너뜁니다. filter=%s",
