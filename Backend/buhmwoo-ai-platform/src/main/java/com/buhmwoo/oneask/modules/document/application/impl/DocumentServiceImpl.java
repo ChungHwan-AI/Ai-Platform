@@ -119,8 +119,9 @@ public class DocumentServiceImpl implements DocumentService {
                     .trim();
             if (safeName.length() > 200) {
                 safeName = safeName.substring(0, 200);
-            }            
+            }                        
             if (safeName.isBlank()) safeName = "unnamed";
+            deleteExistingDocumentsWithSameName(safeName, ragBase);            
             String uuid = UUID.randomUUID().toString();
             String storedName = uuid + "_" + safeName;
 
@@ -202,6 +203,51 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    /** 동일한 파일명이 이미 존재하면 스토리지/DB/RAG에서 정리 후 업로드를 진행합니다. */
+    private void deleteExistingDocumentsWithSameName(String safeName, String ragBase) {
+        List<Document> duplicates = documentRepository.findAllByFileNameIgnoreCase(safeName);
+        if (duplicates.isEmpty()) {
+            return;
+        }
+
+        log.info("[UPLOAD] {} existing document(s) found with fileName={}, deleting before re-upload", duplicates.size(), safeName);
+        for (Document existing : duplicates) {
+            removeExistingDocument(existing, ragBase);
+        }
+        questionAnswerCache.invalidate(null);
+    }
+
+    private void removeExistingDocument(Document document, String ragBase) {
+        String uuid = document.getUuid();
+        String filePath = document.getFilePath();
+        try {
+            Path path = Paths.get(filePath);
+            boolean deleted = Files.deleteIfExists(path);
+            log.info("[UPLOAD] deleted existing storage file uuid={} path={} deleted={}", uuid, path, deleted);
+        } catch (Exception ex) {
+            log.warn("[UPLOAD] failed to delete existing storage file uuid={} path={} err={}", uuid, filePath, ex.toString(), ex);
+        }
+
+        if (!ragBase.isBlank()) {
+            String url = ragBase + "/documents/delete";
+            Map<String, Object> req = Map.of("docId", uuid);
+            try {
+                ragWebClient.post()
+                        .uri(url)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(req)
+                        .retrieve()
+                        .bodyToMono(Map.class)
+                        .doOnNext(body -> log.info("[RAG] delete response for duplicate uuid={}: {}", uuid, body))
+                        .block(Duration.ofSeconds(120));
+            } catch (Exception ex) {
+                log.warn("[RAG] failed to delete existing document uuid={} err={}", uuid, ex.toString(), ex);
+            }
+        }
+
+        documentRepository.delete(document);
+        questionAnswerCache.invalidate(uuid);
+    }    
     /**
      * 검색 조건과 페이지 정보를 받아 문서 목록을 PageResponse 로 변환합니다.
      */

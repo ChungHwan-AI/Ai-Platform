@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface DocumentRepository extends JpaRepository<Document, Long> {
@@ -31,4 +32,6 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             @Param("uploadedTo") LocalDateTime uploadedTo,   // ✅ 업로드 종료일 조건
             Pageable pageable   // ✅ 페이징 및 정렬 정보
     );    
+    
+    List<Document> findAllByFileNameIgnoreCase(String fileName);    
 }

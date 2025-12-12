@@ -5,6 +5,7 @@ from urllib.parse import quote_plus
 from typing import List, Dict, Any, Optional
 import html
 from collections import Counter
+import logging
 
 from config_embed import get_embedding_backend_info_dict  # 임베딩 상태 조회 API 구성을 위해 임포트함
 from config_chroma import get_chroma_settings  # 동적으로 결정된 Chroma 저장 위치를 조회하기 위해 임포트함
@@ -14,6 +15,7 @@ from chromadb import ClientAPI
 
 
 router = APIRouter(prefix="/admin/rag", tags=["admin-rag"])
+logger = logging.getLogger(__name__)
 
 # get_chroma_settings() 헬퍼를 통해 최신 경로·컬렉션 정보를 필요 시점에 조회한다.
 
@@ -223,10 +225,33 @@ def view_page(
     ids = got.get("ids") or []
     metas = got.get("metadatas") or []
     docs = got.get("documents") or []
+    try:
+        col = get_collection()
+        chroma_dir, collection_name = get_chroma_settings()  # HTML 템플릿 상단에 최신 경로/컬렉션 정보를 보여주기 위해 조회함
+        include = ["metadatas"] + (["documents"] if with_documents else [])
+        got = col.get(limit=limit, offset=offset, include=include)
 
-    total_chunks = col.count()
-    meta_all = col.get(include=["metadatas"]).get("metadatas") or []
-    unique_docs_total = len(set(m.get("docId") for m in meta_all if m))
+        ids = got.get("ids") or []
+        metas = got.get("metadatas") or []
+        docs = got.get("documents") or []
+
+        total_chunks = col.count()
+        meta_all = col.get(include=["metadatas"]).get("metadatas") or []
+        unique_docs_total = len(set(m.get("docId") for m in meta_all if m))
+    except Exception as exc:  # Chroma 접근 문제로 500이 나는 경우 사용자에게 원인 노출
+        logger.exception("[ADMIN][VIEW-PAGE] 컬렉션 조회 실패")
+        error_html = f"""
+<!doctype html>
+<html lang=\"ko\">
+<head><meta charset=\"utf-8\"><title>Chroma View - 오류</title></head>
+<body style=\"background:#0b0d12; color:#e5e7eb; font-family: ui-sans-serif, system-ui; padding:24px;\">
+  <h1>Chroma View 오류</h1>
+  <p>Chroma 컬렉션을 불러오는 중 오류가 발생했습니다.</p>
+  <pre style=\"background:#11151d; padding:12px; border-radius:8px; border:1px solid #1f2937; white-space:pre-wrap;\">{html.escape(str(exc))}</pre>
+  <p style=\"color:#9ca3af;\">백엔드 로그를 확인해 주세요.</p>
+</body></html>
+        """
+        return HTMLResponse(content=error_html, status_code=500)
 
     # 페이지네이션 계산
     prev_offset = max(0, offset - limit)
