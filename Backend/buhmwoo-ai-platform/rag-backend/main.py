@@ -980,6 +980,11 @@ async def delete_documents(payload: DocDeleteRequest):
             if meta and (meta.get("source") is not None)
         }
 
+        # 호출 측에서 파일명을 명시적으로 전달한 경우, 메타데이터가 비어 있어도
+        # 물리 파일을 함께 제거할 수 있도록 삭제 대상 목록에 포함한다.
+        if payload.source:
+            sources.add(payload.source)
+            
         if matched_ids:
             collection.delete(where=where)
             persist_vectordb_if_possible(vectordb)

@@ -230,7 +230,10 @@ public class DocumentServiceImpl implements DocumentService {
 
         if (!ragBase.isBlank()) {
             String url = ragBase + "/documents/delete";
-            Map<String, Object> req = Map.of("docId", uuid);
+            Map<String, Object> req = Map.of(
+                    "docId", uuid,
+                    "source", document.getFileName()
+            );
             try {
                 ragWebClient.post()
                         .uri(url)
@@ -829,6 +832,7 @@ public class DocumentServiceImpl implements DocumentService {
             String url = ragBase + "/documents/delete";
             Map<String, Object> req = new HashMap<>();
             req.put("docId", uuid);
+            req.put("source", document.getFileName());
             try {
                 Map<?, ?> ragResponse = ragWebClient.post()
                         .uri(url)
