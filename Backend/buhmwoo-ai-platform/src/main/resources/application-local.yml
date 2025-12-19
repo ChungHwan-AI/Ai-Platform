@@ -8,7 +8,7 @@ oneask:
   storage:
     root: "D:/개발 프로그램/OneAsk플랫폼 개발/Ai-Platform/Backend/buhmwoo-ai-platform/uploads"
   rag:
-    backend-url: "http://127.0.0.1:8001"
+    backend-url: "http://192.168.1.133:8001"
 
 management:
   endpoints:
