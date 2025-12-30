@@ -1,6 +1,6 @@
 package com.buhmwoo.oneask.common.config;
 
-import org.springframework.context.annotation.Bean; // ✅ 스프링 컨테이너에 빈을 등록하기 위해 Bean 애너테이션을 임포트합니다.
+import org.springframework.context.annotation.Bean; // ✅ 스프링 컨테이너에 빈을 등록하기 위해 Bean 너테이션을 임포트합니다.
 import org.springframework.context.annotation.Configuration; // ✅ 설정 클래스를 선언하기 위해 Configuration 애너테이션을 임포트합니다.
 import org.springframework.http.client.reactive.ReactorClientHttpConnector; // ✅ Reactor 기반 Netty 커넥터를 사용하기 위해 임포트합니다.
 import org.springframework.web.reactive.function.client.ExchangeStrategies; // ✅ 대용량 페이로드 처리를 위해 codecs 설정을 조정하기 위해 임포트합니다.
@@ -31,8 +31,8 @@ public class RagWebClientConfig {
                 .build();
     }
 
-    @Bean("openAiWebClient")
-    public WebClient openAiWebClient() {
+    @Bean("geminiWebClient")
+    public WebClient geminiWebClient() {
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofSeconds(120));
 

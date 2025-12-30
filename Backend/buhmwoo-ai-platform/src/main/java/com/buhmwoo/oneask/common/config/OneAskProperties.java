@@ -29,7 +29,7 @@ public class OneAskProperties {
         public void setBackendUrl(String backendUrl) { this.backendUrl = backendUrl; }
     }
 
-    public static class OpenAi {
+    public static class Gemini {
         private String apiKey;
         private String model;
 
@@ -42,7 +42,7 @@ public class OneAskProperties {
 
     private Storage storage = new Storage();
     private Rag rag = new Rag();
-    private OpenAi openai = new OpenAi();
+    private Gemini gemini = new Gemini();
 
     public Storage getStorage() { return storage; }
     public void setStorage(Storage storage) { this.storage = storage; }
@@ -50,20 +50,20 @@ public class OneAskProperties {
     public Rag getRag() { return rag; }
     public void setRag(Rag rag) { this.rag = rag; }
 
-    public OpenAi getOpenai() { return openai; }
-    public void setOpenai(OpenAi openai) { this.openai = openai; }    
+    public Gemini getGemini() { return gemini; }
+    public void setGemini(Gemini gemini) { this.gemini = gemini; }    
 
     @PostConstruct
     void logProps() {
         System.out.println("[BOOT] oneask.storage.root=" + (storage != null ? storage.getRoot() : null));
         System.out.println("[BOOT] oneask.rag.backendUrl=" + (rag != null ? rag.getBackendUrl() : null));
-        if (openai != null) {
-            String maskedKey = openai.getApiKey();
+        if (gemini != null) {
+            String maskedKey = gemini.getApiKey();
             if (maskedKey != null && maskedKey.length() > 6) {
                 maskedKey = maskedKey.substring(0, 3) + "***" + maskedKey.substring(maskedKey.length() - 3);
             }
-            System.out.println("[BOOT] oneask.openai.model=" + openai.getModel());
-            System.out.println("[BOOT] oneask.openai.apiKey=" + maskedKey);
+            System.out.println("[BOOT] oneask.gemini.model=" + gemini.getModel());
+            System.out.println("[BOOT] oneask.gemini.apiKey=" + maskedKey);
         }        
     }
 }

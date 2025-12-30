@@ -13,7 +13,6 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from langchain_core.documents import Document
-from openai import OpenAI
 from pydantic import (
     BaseModel,
     Field,
@@ -56,18 +55,15 @@ logging.getLogger("uvicorn").setLevel(logging.INFO)
 load_dotenv()
 
 # -----------------------------
-# OpenAI Responses + web_search 설정
+# Gemini + Google Search 설정
 # -----------------------------
 
-openai_client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
-    base_url=os.environ.get("OPENAI_BASE_URL") or None,
-)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
-OPENAI_RESPONSES_MODEL = (
-    os.environ.get("OPENAI_RESPONSES_MODEL")
-    or os.environ.get("OPENAI_CHAT_MODEL")
-    or "gpt-4.1-mini"
+GEMINI_MODEL = (
+    os.environ.get("GEMINI_MODEL")
+    or os.environ.get("GEMINI_CHAT_MODEL")
+    or "gemini-1.5-flash"
 )
 
 # -----------------------------
@@ -124,9 +120,9 @@ PROMPT_HUMAN_GENERAL = (
 )
 
 
-def _build_openai_prompt(question: str, context: Optional[str], has_context: bool) -> str:
+def _build_llm_prompt(question: str, context: Optional[str], has_context: bool) -> str:
     """
-    OpenAI Responses API에 그대로 넘길 하나의 텍스트 프롬프트를 만든다.
+    Gemini generateContent에 그대로 넘길 하나의 텍스트 프롬프트를 만든다.
     """
     q = (question or "").strip()
     c = (context or "").strip()
@@ -371,8 +367,66 @@ def _run_retrieval_with_recovery(
 
 
 # -----------------------------
-# OpenAI Responses + web_search 호출
+# Gemini + Google Search 호출
 # -----------------------------
+
+def _extract_gemini_text(payload: dict) -> Optional[str]:
+    candidates = payload.get("candidates")
+    if not candidates:
+        return None
+    first = candidates[0] or {}
+    content = first.get("content") or {}
+    parts = content.get("parts") or []
+    texts = [part.get("text") for part in parts if isinstance(part, dict) and part.get("text")]
+    if texts:
+        return "\n".join(texts)
+    return None
+
+
+def _call_gemini(prompt: str) -> str:
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY가 설정되어 있지 않습니다.",
+        )
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent"
+    )
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}],
+            }
+        ],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2},
+    }
+
+    try:
+        response = httpx.post(
+            url,
+            params={"key": GEMINI_API_KEY},
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gemini 호출 실패: {exc}",
+        ) from exc
+
+    data = response.json()
+    text = _extract_gemini_text(data)
+    if not text:
+        raise HTTPException(
+            status_code=500,
+            detail="Gemini 응답에서 텍스트를 추출하지 못했습니다.",
+        )
+    return text.strip()
 
 
 def _generate_answer(
@@ -382,14 +436,14 @@ def _generate_answer(
 ) -> str:
     """
     문서 컨텍스트 유무에 따라 프롬프트를 만들고
-    OpenAI Responses API + web_search 도구로 최종 답변을 생성한다.
+    Gemini generateContent + Google Search로 최종 답변을 생성한다.
     """
 
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    if provider != "openai":
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    if provider != "gemini":
         raise HTTPException(
             status_code=500,
-            detail=f"지원하지 않는 LLM_PROVIDER: {provider} (현재는 openai + web_search만 지원)",
+            detail=f"지원하지 않는 LLM_PROVIDER: {provider} (현재는 gemini + google_search만 지원)",
         )
 
     if not question or not question.strip():
@@ -398,43 +452,8 @@ def _generate_answer(
             detail="질문이 비어 있습니다.",
         )
 
-    prompt = _build_openai_prompt(question, context, has_context)
-
-    try:
-        response = openai_client.responses.create(
-            model=OPENAI_RESPONSES_MODEL,
-            input=prompt,
-            tools=[{"type": "web_search"}],
-            # 하이브리드 모드에서는 최신 정보 반영을 위해 웹 검색을 반드시 실행하도록 강제
-            tool_choice={"type": "web_search"},            
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"LLM 호출 실패: {e}",
-        ) from e
-
-    text = getattr(response, "output_text", None)
-
-    if not text:
-        try:
-            output = getattr(response, "output", None)
-            if output and len(output) > 0:
-                first = output[0]
-                content_list = getattr(first, "content", None)
-                if content_list:
-                    first_content = content_list[0]
-                    text = getattr(first_content, "text", None)
-        except Exception:
-            text = None
-
-    if not text:
-        raise HTTPException(
-            status_code=500,
-            detail="LLM 응답에서 텍스트를 추출하지 못했습니다.",
-        )
-
-    return text.strip()
+    prompt = _build_llm_prompt(question, context, has_context)
+    return _call_gemini(prompt)
 
 
 # -----------------------------
@@ -635,13 +654,13 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _check_llm_status() -> tuple[bool, Optional[str]]:
-    provider = os.getenv("LLM_PROVIDER", "openai").lower()
-    if provider != "openai":
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    if provider != "gemini":
         return False, f"지원하지 않는 LLM_PROVIDER: {provider}"
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        return False, "OPENAI_API_KEY가 설정되어 있지 않습니다."
+        return False, "GEMINI_API_KEY가 설정되어 있지 않습니다."
 
     return True, None
 
@@ -675,7 +694,7 @@ async def rag_health() -> RagHealthResponse:
 
     return RagHealthResponse(
         ready=ready,
-        llm_provider=os.getenv("LLM_PROVIDER", "openai"),
+        llm_provider=os.getenv("LLM_PROVIDER", "gemini"),
         llm_ready=llm_ready,
         llm_error=llm_error,
         embedding=embedding_info,
@@ -890,8 +909,8 @@ async def query_retrieve(payload: QueryRequest) -> RetrieveResponse:
 )
 async def query_generate(payload: GenerateRequest) -> GenerateResponse:
     """
-    검색된 컨텍스트를 기반으로 LLM 답변만 생성.
-    (OpenAI Responses + web_search 사용)
+    검색된 컨텍스트를 기반으로 LLM 답변 생성.
+    (Gemini generateContent + Google Search 사용)
     """
     try:
         base_context = (payload.context or "").strip()
@@ -1028,9 +1047,9 @@ async def delete_documents(payload: DocDeleteRequest):
 
 # -----------------------------
 # (선택) 외부 웹 검색 API를 붙이고 싶다면
-# 아래에 helper를 추가해서 `_build_openai_prompt`에 합치거나
+# 아래에 helper를 추가해서 `_build_llm_prompt`에 합치거나
 # `/query/generate`에서 context 병합을 해도 된다.
-# 현재 버전은 OpenAI의 web_search tool만 사용.
+# 현재 버전은 Gemini의 google_search tool만 사용.
 # -----------------------------
 
 
@@ -1043,7 +1062,7 @@ def should_use_web_search(question: str) -> bool:
     """
     필요하다면 이 함수를 사용해 외부 검색 API 여부를 판단해서
     build_web_search_context와 합쳐서 쓸 수 있음.
-    (현재는 OpenAI web_search tool만 사용하므로 미사용)
+    (현재는 Gemini google_search tool만 사용하므로 미사용)
     """
     q = (question or "").lower()
     time_keywords = ["현재", "지금", "요즘", "최신", "최근", "오늘", "어제", "이번 주", "이번주"]

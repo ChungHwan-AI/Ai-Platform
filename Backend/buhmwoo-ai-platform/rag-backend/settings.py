@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 
 load_dotenv()  # .env 로드
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
 CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
 
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set")
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is not set")
 
 
 CHROMA_DIR = "./chroma_db"  # settings.py 와 동일하게 맞추기

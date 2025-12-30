@@ -33,29 +33,25 @@ _LAST_EMBEDDING = None  # 마지막으로 생성된 임베딩 객체를 캐시�
 def _resolve_embedding_backend() -> Tuple[EmbeddingBackendInfo, object]:
     """환경 변수에 따라 임베딩 객체와 상태 정보를 생성"""
 
-    configured = os.getenv("EMBEDDING_BACKEND", "openai").lower()  # 기본값을 OpenAI로 바꿔 즉시 해당 백엔드를 사용하도록 구성
-    if configured == "openai":
-        from langchain_openai import OpenAIEmbeddings  # OpenAI 임베딩 클래스를 지연 임포트
+    configured = os.getenv("EMBEDDING_BACKEND", "gemini").lower()  # 기본값을 Gemini로 바꿔 즉시 해당 백엔드를 사용하도록 구성
+    if configured == "gemini":
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings  # Gemini 임베딩 클래스를 지연 임포트
 
-        model = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")  # 사용할 OpenAI 모델명을 확인
-        api_key = os.getenv("OPENAI_API_KEY")  # OpenAI 호출에 필수인 API 키를 읽어옴
+        model = os.getenv("GEMINI_EMBED_MODEL", "text-embedding-004")  # 사용할 Gemini 임베딩 모델명을 확인
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")  # Gemini 호출에 필수인 API 키를 읽어옴
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY 환경 변수가 설정되어 있지 않습니다.")  # API 키 없이 호출하면 명확한 오류를 발생시킴
-        base_url = os.getenv("OPENAI_BASE_URL")  # 사설 프록시 등을 사용할 때를 대비해 base_url도 함께 확인함
-        openai_kwargs = {"model": model, "api_key": api_key}  # 생성자에 전달할 공통 파라미터를 사전으로 구성
-        if base_url:
-            openai_kwargs["base_url"] = base_url  # base_url 이 존재하면 선택적으로 전달해 맞춤 엔드포인트를 사용
+            raise RuntimeError("GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다.")  # API 키 없이 호출하면 명확한 오류를 발생시킴
         info = EmbeddingBackendInfo(
             configured_backend=configured,
-            resolved_backend="openai",
+            resolved_backend="gemini",
             model=model,
             fallback=False,
-        )  # OpenAI 백엔드가 곧바로 선택되었음을 기록
+        )  # Gemini 백엔드가 곧바로 선택되었음을 기록
         logger.info(
-            "EMBEDDING_BACKEND=openai 선택 → OpenAIEmbeddings(%s) 사용",
+            "EMBEDDING_BACKEND=gemini 선택 → GoogleGenerativeAIEmbeddings(%s) 사용",
             model,
-        )  # OpenAI 임베딩 사용 여부를 로그로 남김
-        return info, OpenAIEmbeddings(**openai_kwargs)  # 상태 정보와 함께 임베딩 객체를 반환
+        )  # Gemini 임베딩 사용 여부를 로그로 남김
+        return info, GoogleGenerativeAIEmbeddings(model=model, google_api_key=api_key)  # 상태 정보와 함께 임베딩 객체를 반환
 
     try:
         from langchain_huggingface import HuggingFaceEmbeddings  # 허깅페이스 임베딩 클래스를 지연 임포트
@@ -73,29 +69,25 @@ def _resolve_embedding_backend() -> Tuple[EmbeddingBackendInfo, object]:
         )  # 허깅페이스 임베딩 사용 여부를 로그로 남김
         return info, HuggingFaceEmbeddings(model_name=model)  # 상태 정보와 함께 허깅페이스 임베딩 객체를 반환
     except Exception as exc:  # 허깅페이스 초기화가 실패한 경우 예외를 잡아 폴백을 수행
-        from langchain_openai import OpenAIEmbeddings  # 폴백 대상인 OpenAI 임베딩 클래스를 임포트
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings  # 폴백 대상인 Gemini 임베딩 클래스를 임포트
 
-        model = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")  # 폴백 시 사용할 OpenAI 모델명을 확인
-        api_key = os.getenv("OPENAI_API_KEY")  # 폴백 시에도 OpenAI 호출을 위해 API 키를 확인
+        model = os.getenv("GEMINI_EMBED_MODEL", "text-embedding-004")  # 폴백 시 사용할 Gemini 임베딩 모델명을 확인
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")  # 폴백 시에도 Gemini 호출을 위해 API 키를 확인
         if not api_key:
-            raise RuntimeError("HuggingFace 임베딩 실패 후 OpenAI로 폴백하려 했으나 OPENAI_API_KEY가 없습니다.")  # 폴백이 불가능할 때 즉시 알림
-        base_url = os.getenv("OPENAI_BASE_URL")  # 필요 시 동일하게 base_url을 전달
-        openai_kwargs = {"model": model, "api_key": api_key}  # OpenAIEmbeddings 생성자에 넘길 매개변수를 구성
-        if base_url:
-            openai_kwargs["base_url"] = base_url  # base_url 옵션이 설정되었다면 함께 전달
+            raise RuntimeError("HuggingFace 임베딩 실패 후 Gemini로 폴백하려 했으나 GEMINI_API_KEY가 없습니다.")  # 폴백이 불가능할 때 즉시 알림
         info = EmbeddingBackendInfo(
             configured_backend=configured,
-            resolved_backend="openai",
+            resolved_backend="gemini",
             model=model,
             fallback=True,
             error=str(exc),
         )  # 폴백이 발생했음을 상태 정보에 기록
         logger.warning(
-            "HuggingFaceEmbeddings 초기화 실패(%s) → OpenAIEmbeddings(%s)로 폴백",
+            "HuggingFaceEmbeddings 초기화 실패(%s) → GoogleGenerativeAIEmbeddings(%s)로 폴백",
             exc,
             model,
         )  # 폴백 상황을 경고 로그로 기록
-        return info, OpenAIEmbeddings(**openai_kwargs)  # 상태 정보와 함께 폴백 임베딩 객체를 반환
+        return info, GoogleGenerativeAIEmbeddings(model=model, google_api_key=api_key)  # 상태 정보와 함께 폴백 임베딩 객체를 반환
 
 
 def get_embedding_fn():
@@ -117,14 +109,14 @@ def get_embedding_backend_info(force_refresh: bool = False) -> EmbeddingBackendI
     global _LAST_INFO, _LAST_EMBEDDING  # 캐시된 상태와 임베딩을 참조하기 위해 전역 변수 선언
     if force_refresh:  # 강제로 최신 상태를 확인하고 싶을 때 실행
         info, embedding = _resolve_embedding_backend()  # 현재 환경을 기준으로 임베딩을 새로 생성
-        _LAST_INFO = info  # 갱신된 상태 정보를 캐시에 저장
+        _LAST_INFO = info  # 갱신된 상태 정를 캐시에 저장
         _LAST_EMBEDDING = embedding  # 새 임베딩 객체를 캐시에 저장하여 즉시 사용 가능하게 함
         return info
 
     if _LAST_INFO is not None:  # 이전에 임베딩이 한 번이라도 로드되었다면 캐시된 결과를 반환
         return _LAST_INFO
 
-    configured = os.getenv("EMBEDDING_BACKEND", "openai").lower()  # 기본값이 OpenAI임을 반영해 초기 설정을 일관되게 표시
+    configured = os.getenv("EMBEDDING_BACKEND", "gemini").lower()  # 기본값이 Gemini임을 반영해 초기 설정을 일관되게 표시
     return EmbeddingBackendInfo(
         configured_backend=configured,
         resolved_backend=None,
@@ -141,14 +133,14 @@ def get_embedding_backend_info_dict(force_refresh: bool = False) -> dict:
     return asdict(info)  # 데이터클래스를 사전 형태로 변환해 직렬화가 쉽도록 반환
 
 
-def switch_to_openai_embedding(model: Optional[str] = None) -> object:
-    """코드에서 즉시 OpenAI 임베딩으로 전환하고 객체를 돌려주는 헬퍼"""
+def switch_to_gemini_embedding(model: Optional[str] = None) -> object:
+    """코드에서 즉시 Gemini 임베딩으로 전환하고 객체를 돌려주는 헬퍼"""
 
     global _LAST_INFO, _LAST_EMBEDDING  # 캐시를 갱신하기 위해 전역 상태를 사용한다고 선언
     if model:
-        os.environ["OPENAI_EMBED_MODEL"] = model  # 호출자가 모델명을 지정했다면 환경 변수로 기록해 일관성 있게 유지
-    os.environ["EMBEDDING_BACKEND"] = "openai"  # 환경 설정을 강제로 OpenAI 로 고정해 이후 요청에서도 동일하게 동작
-    info, embedding = _resolve_embedding_backend()  # OpenAI 임베딩 객체와 갱신된 상태 정보를 재계산
+        os.environ["GEMINI_EMBED_MODEL"] = model  # 호출자가 모델명을 지정했다면 환경 변수로 기록해 일관성 있게 유지
+    os.environ["EMBEDDING_BACKEND"] = "gemini"  # 환경 설정을 강제로 Gemini 로 고정해 이후 요청에서도 동일하게 동작
+    info, embedding = _resolve_embedding_backend()  # Gemini 임베딩 객체와 갱신된 상태 정보를 재계산
     _LAST_INFO = info  # 최신 상태 정보를 캐시에 저장해 관리 도구 등에서 바로 확인 가능하게 함
     _LAST_EMBEDDING = embedding  # 방금 생성한 임베딩 객체를 캐시에 보관해 중복 생성을 방지
     return embedding  # LangChain 파이프라인에 바로 연결할 수 있도록 임베딩 객체를 반환

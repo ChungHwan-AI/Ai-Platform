@@ -42,7 +42,8 @@ services:
       dockerfile: Dockerfile
     container_name: rag-backend
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LLM_PROVIDER: gemini
       CHROMA_DIR: /app/chroma_db      
       TZ: Asia/Seoul
     ports:

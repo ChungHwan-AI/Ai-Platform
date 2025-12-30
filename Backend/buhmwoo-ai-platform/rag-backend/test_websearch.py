@@ -1,17 +1,17 @@
 # test_websearch.py
 import json
+
+import httpx
+import uvicorn
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from openai import OpenAI
-import uvicorn
 
 # -------------------------------------------------------
 # 🔥 여기만 네 환경에 맞게 고쳐줘
-OPENAI_API_KEY = ""
-MODEL_NAME = "gpt-4.1-mini"   # 사용 중인 Responses 모델 (gpt-4.1 / gpt-4.1-mini / gpt-5.1 등)
+GEMINI_API_KEY = ""
+MODEL_NAME = "gemini-2.0-flash"   # 사용 중인 Gemini 모델
 # -------------------------------------------------------
 
-client = OpenAI(api_key=OPENAI_API_KEY)
 app = FastAPI()
 
 HTML_PAGE = """
@@ -31,9 +31,9 @@ HTML_PAGE = """
   </style>
 </head>
 <body>
-  <h1>🔍 Web Search 동작 테스트</h1>
-  <p>이 페이지는 OpenAI Responses API를 <code>tools=[{"type": "web_search"}]</code>로 호출해서,<br>
-     실제로 web_search가 사용되는지 확인하기 위한 테스트입니다.</p>
+  <h1>🔍 Google Search 동작 테스트</h1>
+  <p>이 페이지는 Gemini generateContent를 <code>tools=[{"google_search": {}}]</code>로 호출해서,<br>
+     실제로 google_search가 사용되는지 확인하기 위한 테스트입니다.</p>
 
   <form id="test-form">
     <textarea name="question">지금 원/달러 환율이 얼마야?</textarea><br/>
@@ -67,8 +67,8 @@ form.addEventListener("submit", async (e) => {
   const data = await res.json();
 
   const tag = data.used_web_search
-      ? '<span class="tag ok">web_search 사용됨</span>'
-      : '<span class="tag no">web_search 사용 안됨</span>';
+      ? '<span class="tag ok">google_search 사용됨</span>'
+      : '<span class="tag no">google_search 사용 안됨</span>';
 
   statusEl.innerHTML = "결과: " + tag;
 
@@ -92,27 +92,34 @@ async def index():
 @app.post("/api/test")
 async def test(question: str = Form(...)):
     """
-    질문을 받아서 Responses API를 tools=[{"type": "web_search"}]로 호출하고,
-    응답 전체 JSON 안에 'web_search' 문자열이 있는지만 보고 사용 여부를 판단한다.
+    질문을 받아서 Gemini API를 tools=[{"google_search": {}}]로 호출하고,
+    응답 전체 JSON 안에 'google_search' 문자열이 있는지만 보고 사용 여부를 판단한다.
     """
-    resp = client.responses.create(
-        model=MODEL_NAME,
-        input=question,
-        tools=[{"type": "web_search"}],  # web_search_preview로 바꿔볼 수도 있음
+    resp = httpx.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent",
+        params={"key": GEMINI_API_KEY},
+        json={
+            "contents": [{"role": "user", "parts": [{"text": question}]}],
+            "tools": [{"google_search": {}}],
+            "generationConfig": {"temperature": 0.2},
+        },
+        timeout=60,
     )
+    resp.raise_for_status()
+    raw = resp.json()
 
-    # SDK 버전에 상관없이 가장 안전하게 텍스트를 뽑는 방법:
-    answer = getattr(resp, "output_text", "")
-    if not answer:
-        # 그래도 없으면 그냥 문자열로 캐스팅
-        answer = str(resp)
-
-    # RAW 데이터 전체
-    raw = resp.model_dump()
+    # 응답 텍스트 추출
+    answer = ""
+    candidates = raw.get("candidates") or []
+    if candidates:
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        answer = "\n".join(
+            part.get("text") for part in parts if isinstance(part, dict) and part.get("text")
+        )
     raw_text = json.dumps(raw, ensure_ascii=False)
 
     # web_search 호출 여부 (대략적으로만 체크)
-    used = "web_search" in raw_text.lower()
+    used = "google_search" in raw_text.lower()
 
     return JSONResponse({
         "answer": answer,

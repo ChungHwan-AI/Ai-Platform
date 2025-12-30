@@ -78,14 +78,14 @@ public class DocumentServiceImpl implements DocumentService {
     private final GptClient gptClient;
     private final QuestionIntentClassifier intentClassifier;
     private final QuestionAnswerCache questionAnswerCache;
-    private final @Qualifier("openAiWebClient") WebClient openAiWebClient;
+    private final @Qualifier("geminiWebClient") WebClient geminiWebClient;
 
     private static final int DEFAULT_TOP_K = 4;
     private static final double DEFAULT_SCORE_THRESHOLD = 0.55;
     private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(30);
 
-    /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱싱 트리거 */
+    /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱 트리거 */
     @Override
     public ApiResponseDto<Map<String, Object>> uploadFile(
             org.springframework.web.multipart.MultipartFile file,
@@ -400,178 +400,98 @@ public class DocumentServiceImpl implements DocumentService {
         GptRequest gptRequest = new GptRequest(question, retrievalResult.context());
         GptResponse gptResponse = gptClient.generate(gptRequest);
 
-        if (gptResponse.answer() == null || gptResponse.answer().isBlank()) {
-            throw new IllegalStateException("질의 실패: GPT 응답이 비어 있습니다.");
+        if (gptResponse == null) {
+            log.warn("[RAG] GPT 응답이 null 입니다.");
+            return buildFallbackAnswer(question, BotMode.STRICT, retrievalResult.docId() == null);
         }
-        List<QuestionAnswerSourceDto> sources = retrievalResult.matches().stream()
-                .map(match -> QuestionAnswerSourceDto.builder()
-                        .reference(match.reference())
-                        .source(match.source())
-                        .page(match.page())
-                        .preview(match.preview())
-                        .build())
-                .toList();
+
+        String answer = gptResponse.answer();
+        if (!StringUtils.hasText(answer)) {
+            log.warn("[RAG] GPT 응답이 비어 있습니다.");
+            return buildFallbackAnswer(question, BotMode.STRICT, retrievalResult.docId() == null);
+        }
+
+        List<QuestionAnswerSourceDto> sources = Optional.ofNullable(retrievalResult.sources()).orElse(List.of());
+        String title = buildAnswerTitle(question, sources);
 
         return QuestionAnswerResponseDto.builder()
-                .title(buildAnswerTitle(question, sources))
-                .answer(gptResponse.answer())
+                .answer(answer)
                 .sources(sources)
-                .fromCache(false)
+                .title(title)
                 .build();
     }
 
-    /** 모드별 fallback (검색 신뢰도 부족/실패 시) */
-    private QuestionAnswerResponseDto buildFallbackAnswer(String question, BotMode mode, boolean globalQuery) {
-        if (mode == BotMode.STRICT) {
-            // STRICT 모드는 문서 기반 시스템이기 때문에, 문서 없음만 명시
-            return QuestionAnswerResponseDto.builder()
-                    .title(buildAnswerTitle(question, List.of()))
-                    .answer("현재 업로드된 문서/DB에서는 이 질문과 관련된 정보를 찾지 못했습니다.\n" +
-                            "관련 문서나 데이터가 등록된 이후에 다시 문의해 주세요.")
-                    .sources(List.of())
-                    .fromCache(false)
-                    .build();
-        }
-
-        boolean useWebSearch = mode == BotMode.HYBRID;
-        String generalAnswer = useWebSearch
-                ? generateHybridAnswer(question)
-                : generateGeneralKnowledgeAnswer(question);
-
-        return QuestionAnswerResponseDto.builder()
-                .title(buildAnswerTitle(question, List.of()))
-                .answer(generalAnswer)
-                .sources(List.of())
-                .fromCache(false)
-                .build();
-    }
-
-    /** 타임아웃 시 임시 안내 답변 */
-    private QuestionAnswerResponseDto buildTimeoutFallback(String question, BotMode mode, boolean globalQuery) {
-        String guidance = "현재 답변이 지연되고 있어요. 잠시 후 다시 시도해 주세요.";
-
-        if (mode == BotMode.STRICT) {
-            return QuestionAnswerResponseDto.builder()
-                    .title(buildAnswerTitle(question, List.of()))
-                    .answer(guidance + "\n지금은 문서 검색이 원활하지 않아 임시 안내만 드려요.")
-                    .sources(List.of())
-                    .fromCache(false)
-                    .build();
-        }
-
-        String generalAnswer = buildAdaptiveGuidance(question);
-        String combined = guidance + "\n\n[임시 답변]\n" + generalAnswer;
-
-        return QuestionAnswerResponseDto.builder()
-                .title(buildAnswerTitle(question, List.of()))
-                .answer(combined)
-                .sources(List.of())
-                .fromCache(false)
-                .build();
-    }
-
-    /** 일상 대화형 질문 처리 */
     private QuestionAnswerResponseDto buildSmallTalkAnswer(String question) {
-        String normalized = question == null ? "" : question.toLowerCase(Locale.ROOT);
-
-        String baseContext =
-                "(일상 대화) 친근하고 자연스러운 한국어 ChatGPT 스타일로 2~3문장 이내로 답변하세요. " +
-                "사용자의 말투(반말/존댓말)를 따라가고, 너무 딱딱한 표현이나 '근거 부족' 같은 말은 쓰지 않습니다.";
-
-        if (normalized.contains("날씨")) {
-            baseContext += " 실시간 기상 데이터는 직접 조회하지 못하지만, 계절과 한국 날씨 느낌을 고려해서 " +
-                    "대략적인 날씨 분위기와 옷차림/우산 같은 간단한 팁을 함께 알려주세요. " +
-                    "마지막에 '정확한 정보는 날씨 앱에서 확인해 주세요' 정도만 짧게 덧붙입니다.";
-        }
-
-        String message;
-        try {
-            GptResponse response = gptClient.generate(
-                    new GptRequest(question, baseContext),
-                    SMALL_TALK_TIMEOUT
-            );
-            message = Optional.ofNullable(response)
-                    .map(GptResponse::answer)
-                    .filter(answer -> !answer.isBlank())
-                    .orElse("지금은 바로 대답을 만들지 못했어요. 다시 한 번만 물어봐 줄래요?");
-        } catch (Exception e) {
-            log.warn("[SMALL_TALK][TIMEOUT] 빠른 응답 실패: {}", e.getMessage());
-            String fallback = buildAdaptiveGuidance(question);
-            message = "답변이 조금 지연되고 있어요. 잠시 후 다시 물어봐 주시면 더 잘 도와줄 수 있어요.\n\n[임시 답변]\n"
-                    + fallback;
-        }
-
+        String answer = buildAdaptiveGuidance(question);
         return QuestionAnswerResponseDto.builder()
-                .title(buildAnswerTitle(question, List.of()))
-                .answer(message)
-                .sources(List.of())
-                .fromCache(false)
+                .answer(answer)
+                .title("안내")
                 .build();
     }
 
-    /** 검색 결과 메타데이터에서 score 계산 */
-    private Double extractScore(RetrievedDocumentChunk chunk) {
-        Map<String, Object> metadata = chunk.metadata();
-        if (metadata == null) {
-            return null;
-        }
-
-        Object scoreRaw = metadata.get("score");
-        if (scoreRaw instanceof Number number) {
-            return number.doubleValue();
-        }
-        if (scoreRaw instanceof String scoreText) {
-            try {
-                return Double.parseDouble(scoreText);
-            } catch (NumberFormatException ignored) {
-            }
-        }
-
-        Object distanceRaw = metadata.get("distance");
-        if (distanceRaw instanceof Number number) {
-            double distance = number.doubleValue();
-            return 1.0 / (1.0 + distance);
-        }
-        return null;
-    }
-
-    /** 문서 검색을 건너뛴 일반 지식 응답 */
     private QuestionAnswerResponseDto buildGeneralKnowledgeOnlyAnswer(String question, boolean allowWebSearch) {
         String answer = allowWebSearch ? generateHybridAnswer(question) : generateGeneralKnowledgeAnswer(question);
-
         return QuestionAnswerResponseDto.builder()
-                .title(buildAnswerTitle(question, List.of()))
                 .answer(answer)
-                .sources(List.of())
-                .fromCache(false)
+                .title("안내")
                 .build();
     }
 
-    /** HYBRID 모드에서 쓸 ChatGPT 스타일 일반 지식 답변 */
+    private QuestionAnswerResponseDto buildFallbackAnswer(String question, BotMode mode, boolean isGeneral) {
+        String answer = isGeneral
+                ? generateGeneralKnowledgeAnswer(question)
+                : buildAdaptiveGuidance(question);
+
+        String title = isGeneral ? "안내" : "문서 응답";
+
+        return QuestionAnswerResponseDto.builder()
+                .answer(answer)
+                .title(title)
+                .build();
+    }
+
+    private QuestionAnswerResponseDto buildTimeoutFallback(String question, BotMode mode, boolean isGeneral) {
+        String answer = isGeneral
+                ? generateGeneralKnowledgeAnswer(question)
+                : buildAdaptiveGuidance(question);
+
+        return QuestionAnswerResponseDto.builder()
+                .answer(answer)
+                .title("응답 지연")
+                .build();
+    }
+
+    private Double extractScore(RetrievedDocumentChunk chunk) {
+        if (chunk == null) return null;
+        return chunk.score();
+    }
+
     private String generateGeneralKnowledgeAnswer(String question) {
-        String context =
-                """
-                너는 한국어로 대답하는 일반 지식 Q&A 어시스턴트다.
+        String context = """
+                - 질문과 관련된 일반적인 사실을 근거로
+                  최대한 빠르게 2~4 문장 이내로 답하라.
+                - 수치나 구체적 값(기간, 연도, 금액 등)이 필요한 질문이면,
+                  임의로라도 구체적인 수치를 만들어 넣어라.
+                - 답변이 불완전할 경우, 사용자에게
+                  보강할 수 있는 정보나 조건을 짧게 요청하라.
+                - 답변 중 직접적인 "추측" 이라는 표현은 사용하지 말고,
+                  대신 "보통", "대체로", "일반적으로" 등의 표현을 쓰지 마라.
 
-                ● 답변 스타일
-                - 항상 질문에 대한 '직접적인 대답 문장'으로 시작해라.
-                예) "서울시 인구는 대략 ○○만 명 정도입니다."
-                - 특히 인구, 숫자, 금액, 기간처럼 수치를 묻는 질문이면
-                → 반드시 대략적인 값이라도 숫자를 포함해서 답해야 한다.
-                → "잘 모르겠다", "근거 부족" 같은 말은 쓰지 않는다.
-                - 필요한 경우, 문장 끝에 짧게
-                "정확한 최신 수치는 공식 통계를 한 번 더 확인해 주세요."
-                정도만 붙일 수 있다.
+                ● 문장 스타일
+                - 존댓말로 자연스럽게 대답한다.
+                - 답변은 2~4 문장 이내로 간결하게 작성한다.
+                - 숫자/기간/비율 등은 가능한 한 구체적으로 제시한다.
+                - 내용을 부풀려서 장황하게 쓰지 않는다.
 
-                ● 금지 표현
-                - '근거 부족', '일반적으로', '정책과 다를 수 있습니다' 같은
-                딱딱한 공지/면책성 문장은 사용하지 마라.
-                - '나중에 다시 물어봐 주세요', '답변이 지연되고 있습니다' 같은
-                시스템/에러 안내 문구도 절대 쓰지 마라.
+                ● 반드시 지켜야 할 금지사항
+                - "추측", "확실치", "근거 부족", "정책과 다를 수" 같은 표현은 절대 쓰지 마라.
+                - "답변이 지연", "나중에 다시", "시간이 걸린다" 같은 말은 쓰지 마라.
 
-                ● 말투
-                - 한국어 기준, 보통 존댓말로 자연스럽게 말한다.
-                - 문장은 2~4개 정도로, 너무 장황하지 않게 설명한다.
+                ● 최종 결론
+                - 질문에 바로 답하고, 1~2 문장으로 설명을 덧붙인다.
+                - 꼭 필요한 경우에만 마지막에 짧게
+                  "정확한 최신 수치는 공식 통계를 한 번 더 확인해 주세요."
+                  라고 말할 수 있다.
                 """;
 
         try {
@@ -605,26 +525,31 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     private String tryWebSearchAnswer(String question) {
-        OneAskProperties.OpenAi openAi = props.getOpenai();
-        if (openAi == null || !StringUtils.hasText(openAi.getApiKey())) {
-            log.warn("[WEB_SEARCH] OpenAI API 키가 설정되지 않아 웹검색을 건너뜁니다.");
+        OneAskProperties.Gemini gemini = props.getGemini();
+        if (gemini == null || !StringUtils.hasText(gemini.getApiKey())) {
+            log.warn("[WEB_SEARCH] Gemini API 키가 설정되지 않아 웹검색을 건너뜁니다.");
             return null;
         }
 
-        String model = StringUtils.hasText(openAi.getModel()) ? openAi.getModel() : "gpt-4.1-mini";
+        String model = StringUtils.hasText(gemini.getModel()) ? gemini.getModel() : "gemini-2.0-flash";
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+                model + ":generateContent?key=" + URLEncoder.encode(gemini.getApiKey(), StandardCharsets.UTF_8);
+
         Map<String, Object> payload = new HashMap<>();
-        payload.put("model", model);
-        payload.put("input", question);
-        payload.put("tools", List.of(Map.of("type", "web_search")));
+        payload.put("contents", List.of(Map.of(
+                "role", "user",
+                "parts", List.of(Map.of("text", question))
+        )));
+        payload.put("tools", List.of(Map.of("google_search", Map.of())));
+        payload.put("generationConfig", Map.of("temperature", 0.2));
 
         try {
-            ResponsesPayload response = openAiWebClient.post()
-                    .uri("https://api.openai.com/v1/responses")
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + openAi.getApiKey())
+            GeminiPayload response = geminiWebClient.post()
+                    .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(payload)
                     .retrieve()
-                    .bodyToMono(ResponsesPayload.class)
+                    .bodyToMono(GeminiPayload.class)
                     .block(Duration.ofSeconds(60));
 
             String answer = extractWebSearchAnswer(response);
@@ -639,34 +564,35 @@ public class DocumentServiceImpl implements DocumentService {
         return null;
     }
 
-    private String extractWebSearchAnswer(ResponsesPayload response) {
+    private String extractWebSearchAnswer(GeminiPayload response) {
         if (response == null) {
             return null;
         }
-        if (StringUtils.hasText(response.outputText())) {
-            return response.outputText();
-        }
         return Optional.ofNullable(response.output())
                 .flatMap(outputs -> outputs.stream()
-                        .map(ResponseOutput::content)
+                        .map(GeminiCandidate::content)
+                        .filter(Objects::nonNull)
+                        .map(GeminiContent::parts)
                         .filter(Objects::nonNull)
                         .flatMap(Collection::stream)
-                        .map(ResponseContent::text)
+                        .map(GeminiPart::text)
                         .filter(StringUtils::hasText)
                         .findFirst())
                 .orElse(null);
     }
 
-    private record ResponsesPayload(
-            @JsonProperty("output_text") String outputText,
-            List<ResponseOutput> output
+    private record GeminiPayload(
+            @JsonProperty("candidates") List<GeminiCandidate> output
     ) {
     }
 
-    private record ResponseOutput(List<ResponseContent> content) {
+    private record GeminiCandidate(@JsonProperty("content") GeminiContent content) {
     }
 
-    private record ResponseContent(String text) {
+    private record GeminiContent(@JsonProperty("parts") List<GeminiPart> parts) {
+    }
+
+    private record GeminiPart(@JsonProperty("text") String text) {
     }
 
     /** GPT 호출 없이도 질문 유형에 맞춰 바로 줄 수 있는 안내 */
