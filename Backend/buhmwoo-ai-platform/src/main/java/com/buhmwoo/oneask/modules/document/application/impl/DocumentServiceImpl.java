@@ -82,7 +82,6 @@ public class DocumentServiceImpl implements DocumentService {
 
     private static final int DEFAULT_TOP_K = 4;
     private static final double DEFAULT_SCORE_THRESHOLD = 0.55;
-    private static final Duration SMALL_TALK_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration GENERAL_KNOWLEDGE_TIMEOUT = Duration.ofSeconds(30);
 
     /** 업로드(+DB 저장) → FastAPI(/upload, multipart) 전송 → 인덱 트리거 */
@@ -357,7 +356,7 @@ public class DocumentServiceImpl implements DocumentService {
                     || (maxScore == null && hasMatches);
 
             if (useRag) {
-                QuestionAnswerResponseDto ragAnswer = buildRagAnswer(questionText, retrievalResult);
+                QuestionAnswerResponseDto ragAnswer = buildRagAnswer(questionText, docId, retrievalResult);
                 questionAnswerCache.put(docId, questionText, mode, ragAnswer);
                 return ApiResponseDto.ok(ragAnswer, "응답 성공");
             }
@@ -396,22 +395,22 @@ public class DocumentServiceImpl implements DocumentService {
         return classified;
     }
 
-    private QuestionAnswerResponseDto buildRagAnswer(String question, DocumentRetrievalResult retrievalResult) {
+    private QuestionAnswerResponseDto buildRagAnswer(String question, String docId, DocumentRetrievalResult retrievalResult) {
         GptRequest gptRequest = new GptRequest(question, retrievalResult.context());
         GptResponse gptResponse = gptClient.generate(gptRequest);
 
         if (gptResponse == null) {
             log.warn("[RAG] GPT 응답이 null 입니다.");
-            return buildFallbackAnswer(question, BotMode.STRICT, retrievalResult.docId() == null);
+            return buildFallbackAnswer(question, BotMode.STRICT, docId == null);
         }
 
         String answer = gptResponse.answer();
         if (!StringUtils.hasText(answer)) {
             log.warn("[RAG] GPT 응답이 비어 있습니다.");
-            return buildFallbackAnswer(question, BotMode.STRICT, retrievalResult.docId() == null);
+            return buildFallbackAnswer(question, BotMode.STRICT, docId == null);
         }
 
-        List<QuestionAnswerSourceDto> sources = Optional.ofNullable(retrievalResult.sources()).orElse(List.of());
+        List<QuestionAnswerSourceDto> sources = buildAnswerSources(retrievalResult);
         String title = buildAnswerTitle(question, sources);
 
         return QuestionAnswerResponseDto.builder()
@@ -462,8 +461,39 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     private Double extractScore(RetrievedDocumentChunk chunk) {
-        if (chunk == null) return null;
-        return chunk.score();
+        if (chunk == null) {
+            return null;
+        }
+        Map<String, Object> metadata = chunk.metadata();
+        if (metadata == null) {
+            return null;
+        }
+        Object score = metadata.get("score");
+        if (score instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (score instanceof String text) {
+            try {
+                return Double.parseDouble(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private List<QuestionAnswerSourceDto> buildAnswerSources(DocumentRetrievalResult retrievalResult) {
+        return Optional.ofNullable(retrievalResult.matches())
+                .orElse(List.of())
+                .stream()
+                .filter(Objects::nonNull)
+                .map(match -> QuestionAnswerSourceDto.builder()
+                        .reference(match.reference())
+                        .source(match.source())
+                        .page(match.page())
+                        .preview(match.preview())
+                        .build())
+                .toList();
     }
 
     private String generateGeneralKnowledgeAnswer(String question) {
