@@ -399,7 +399,7 @@ def _call_gemini(prompt: str) -> str:
         )
 
     url = (
-        "https://generativelanguage.googleapis.com/v1/models/"
+        "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent"
     )
     payload = {
