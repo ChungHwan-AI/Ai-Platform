@@ -66,6 +66,14 @@ GEMINI_MODEL = (
     or "gemini-1.5-flash"
 )
 
+GEMINI_USE_GOOGLE_SEARCH = os.environ.get("GEMINI_USE_GOOGLE_SEARCH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+)
+
 # -----------------------------
 # 프롬프트 관련 구조체/문자열
 # -----------------------------
@@ -401,9 +409,11 @@ def _call_gemini(prompt: str) -> str:
                 "parts": [{"text": prompt}],
             }
         ],
-        "tools": [{"google_search": {}}],
         "generationConfig": {"temperature": 0.2},
     }
+
+    if GEMINI_USE_GOOGLE_SEARCH:
+        payload["tools"] = [{"google_search": {}}]
 
     try:
         response = httpx.post(
@@ -413,7 +423,19 @@ def _call_gemini(prompt: str) -> str:
             timeout=60,
         )
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        response_text = exc.response.text if exc.response is not None else ""
+        logger.error("Gemini 호출 실패: %s", response_text)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Gemini 호출 실패: "
+                f"{exc.response.status_code if exc.response is not None else 'unknown'} "
+                f"{response_text}"
+            ),
+        ) from exc        
     except httpx.HTTPError as exc:
+        logger.error("Gemini 호출 실패(네트워크): %s", exc)        
         raise HTTPException(
             status_code=500,
             detail=f"Gemini 호출 실패: {exc}",
