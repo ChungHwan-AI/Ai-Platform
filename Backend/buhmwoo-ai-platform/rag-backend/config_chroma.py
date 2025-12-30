@@ -9,8 +9,38 @@ from chromadb.config import Settings  # 텔레메트리 및 저장소 설정을 
 
 logger = logging.getLogger(__name__)  # 모듈 전용 로거를 생성해 상황별 정보를 출력
 
-_COLLECTION_OVERRIDE = os.getenv("CHROMA_COLLECTION")  # 사용자가 직접 지정한 컬렉션 이름을 우선 저장
-_DEFAULT_COLLECTION_BASE = "oneask_docs"  # 컬렉션 이름 기본 접두사를 상수로 관리
+_DEFAULT_COLLECTION_BASE = "oneask-docs"  # 컬렉션 이름 기본 접두사를 상수로 관리
+
+def _normalize_collection_name(raw: str) -> str:
+    """컬렉션 이름을 Chroma 규칙에 맞게 정규화"""
+
+    normalized = re.sub(r"[^0-9a-zA-Z]+", "-", raw)
+    normalized = normalized.strip("-")
+    normalized = re.sub(r"\.\.+", "-", normalized)
+
+    if len(normalized) < 3:
+        return _DEFAULT_COLLECTION_BASE
+
+    if len(normalized) > 63:
+        normalized = normalized[:63].rstrip("-")
+
+    if not normalized or not normalized[0].isalnum() or not normalized[-1].isalnum():
+        return _DEFAULT_COLLECTION_BASE
+
+    return normalized
+
+_COLLECTION_OVERRIDE_RAW = os.getenv("CHROMA_COLLECTION")  # 사용자가 직접 지정한 컬렉션 이름을 우선 저장
+_COLLECTION_OVERRIDE = (
+    _normalize_collection_name(_COLLECTION_OVERRIDE_RAW)
+    if _COLLECTION_OVERRIDE_RAW
+    else None
+)
+if _COLLECTION_OVERRIDE_RAW and _COLLECTION_OVERRIDE != _COLLECTION_OVERRIDE_RAW:
+    logger.warning(
+        "CHROMA_COLLECTION 값이 유효하지 않아 '%s'로 정규화했습니다 (입력값: %s).",
+        _COLLECTION_OVERRIDE,
+        _COLLECTION_OVERRIDE_RAW,
+    )
 
 def _resolve_chroma_dir():
     env = os.getenv("CHROMA_DIR", "chroma_db")  # 기본값 폴더명만
@@ -34,8 +64,8 @@ CHROMA_CLIENT_SETTINGS = Settings(
 def _sanitize_suffix(raw: str) -> str:
     """컬렉션 이름에 붙일 접미사를 안전하게 정규화"""
 
-    normalized = re.sub(r"[^0-9a-zA-Z]+", "_", raw)  # 영숫자 외 문자를 밑줄로 치환
-    normalized = normalized.strip("_")  # 앞뒤 불필요한 밑줄 제거
+    normalized = re.sub(r"[^0-9a-zA-Z]+", "-", raw)  # 영숫자 외 문자를 하이픈으로 치환
+    normalized = normalized.strip("-")  # 앞뒤 불필요한 하이픈 제거
     return normalized or "default"  # 전부 제거된 경우를 대비한 폴백 값 반환
 
 
@@ -55,8 +85,8 @@ def _select_collection_name() -> str:
 
     if suffix_source:
         suffix = _sanitize_suffix(suffix_source)
-        return f"{_DEFAULT_COLLECTION_BASE}_{suffix}"  # 백엔드별로 구분되는 컬렉션 이름 생성
-
+        return f"{_DEFAULT_COLLECTION_BASE}-{suffix}"  # 백엔드별로 구분되는 컬렉션 이름 생성
+    
     return _DEFAULT_COLLECTION_BASE  # 특별한 정보가 없다면 기본값 유지
 
 def _ensure_collection_name() -> str:
