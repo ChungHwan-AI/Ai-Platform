@@ -647,6 +647,57 @@ def _extract_text_xlsx(path: Path, max_rows_per_sheet: int = 2000) -> str:
 
 SUPPORTED_EXTS = {".txt", ".csv", ".log", ".md", ".pdf", ".docx", ".pptx", ".xlsx"}
 
+def _iter_exception_chain(exc: Exception) -> List[Exception]:
+    """예외 체인을 따라가며 원인 예외를 수집."""
+    chain: List[Exception] = []
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, Exception):
+            chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _matches_quota_message(message: str) -> Optional[HTTPException]:
+    lowered = message.lower()
+    if "insufficient_quota" in lowered or "you exceeded your current quota" in lowered:
+        return HTTPException(
+            status_code=429,
+            detail="임베딩 공급자 쿼터를 초과했습니다. 요금제/크레딧을 확인한 뒤 다시 시도하세요.",
+        )
+    if "error code: 429" in lowered or "status code: 429" in lowered:
+        return HTTPException(
+            status_code=429,
+            detail="임베딩 공급자 요청이 제한되었습니다(429). 잠시 후 다시 시도하세요.",
+        )
+    return None
+
+
+def _as_quota_http_exception(exc: Exception) -> Optional[HTTPException]:
+    """외부 임베딩/LLM 공급자의 쿼터 초과 오류를 429로 변환."""
+    for current in _iter_exception_chain(exc):
+        status_code = getattr(current, "status_code", None)
+        if status_code == 429:
+            return HTTPException(
+                status_code=429,
+                detail="임베딩 공급자 쿼터를 초과했습니다. 요금제/크레딧을 확인한 뒤 다시 시도하세요.",
+            )
+
+        response = getattr(current, "response", None)
+        response_status = getattr(response, "status_code", None)
+        if response_status == 429:
+            return HTTPException(
+                status_code=429,
+                detail="임베딩 공급자 요청이 제한되었습니다(429). 잠시 후 다시 시도하세요.",
+            )
+
+        for message in (str(current), repr(current), *[str(arg) for arg in getattr(current, "args", [])]):
+            quota_exc = _matches_quota_message(message)
+            if quota_exc:
+                return quota_exc
+    return None
 
 def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
     ext = dst.suffix.lower()
@@ -843,7 +894,11 @@ async def upload(
                     ) from retry_exc
             else:
                 raise
-
+        except Exception as err:
+            quota_exc = _as_quota_http_exception(err)
+            if quota_exc:
+                raise quota_exc from err
+            raise
         try:
             count_after = vectordb._collection.count()
         except Exception:
@@ -875,6 +930,10 @@ async def upload(
         )
         raise
     except Exception as e:
+        quota_exc = _as_quota_http_exception(e)
+        if quota_exc:
+            logger.warning("임베딩 공급자 쿼터 초과로 업로드 실패: %s", e)
+            raise quota_exc from e        
         logger.exception("업로드 처리 중 예상치 못한 오류가 발생했습니다")
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
 
