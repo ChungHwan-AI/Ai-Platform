@@ -532,7 +532,7 @@ public class DocumentServiceImpl implements DocumentService {
         }
 
         String model = StringUtils.hasText(gemini.getModel()) ? gemini.getModel() : "gemini-2.0-flash";
-        String url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+        String url = "https://generativelanguage.googleapis.com/v1/models/" +
                 model + ":generateContent?key=" + URLEncoder.encode(gemini.getApiKey(), StandardCharsets.UTF_8);
 
         Map<String, Object> payload = new HashMap<>();
