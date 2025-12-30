@@ -34,6 +34,11 @@ def _resolve_embedding_backend() -> Tuple[EmbeddingBackendInfo, object]:
     """환경 변수에 따라 임베딩 객체와 상태 정보를 생성"""
 
     configured = os.getenv("EMBEDDING_BACKEND", "gemini").lower()  # 기본값을 Gemini로 바꿔 즉시 해당 백엔드를 사용하도록 구성
+    if configured in {"openai", "azure_openai", "azure-openai"}:
+        raise RuntimeError(
+            "OpenAI 임베딩은 더 이상 지원하지 않습니다. "
+            "EMBEDDING_BACKEND=gemini 또는 hf로 설정하세요."
+        )    
     if configured == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings  # Gemini 임베딩 클래스를 지연 임포트
 
