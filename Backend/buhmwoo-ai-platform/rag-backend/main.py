@@ -667,6 +667,11 @@ def _matches_quota_message(message: str) -> Optional[HTTPException]:
             status_code=429,
             detail="임베딩 공급자 쿼터를 초과했습니다. 요금제/크레딧을 확인한 뒤 다시 시도하세요.",
         )
+    if "quota" in lowered and "exceeded" in lowered:
+        return HTTPException(
+            status_code=429,
+            detail="임베딩 공급자 쿼터를 초과했습니다. 요금제/크레딧을 확인한 뒤 다시 시도하세요.",
+        )    
     if "error code: 429" in lowered or "status code: 429" in lowered:
         return HTTPException(
             status_code=429,
@@ -674,6 +679,37 @@ def _matches_quota_message(message: str) -> Optional[HTTPException]:
         )
     return None
 
+def _extract_quota_message_from_payload(payload: object) -> Optional[HTTPException]:
+    if payload is None:
+        return None
+    if callable(payload):
+        try:
+            return _extract_quota_message_from_payload(payload())
+        except Exception:
+            return None
+    if isinstance(payload, str):
+        return _matches_quota_message(payload)
+    if isinstance(payload, bytes):
+        try:
+            return _matches_quota_message(payload.decode("utf-8", errors="ignore"))
+        except Exception:
+            return None
+    if isinstance(payload, dict):
+        for key in ("detail", "message", "error", "body", "response"):
+            if key in payload:
+                quota_exc = _extract_quota_message_from_payload(payload.get(key))
+                if quota_exc:
+                    return quota_exc
+        for value in payload.values():
+            quota_exc = _extract_quota_message_from_payload(value)
+            if quota_exc:
+                return quota_exc
+    if isinstance(payload, (list, tuple, set)):
+        for item in payload:
+            quota_exc = _extract_quota_message_from_payload(item)
+            if quota_exc:
+                return quota_exc
+    return None
 
 def _as_quota_http_exception(exc: Exception) -> Optional[HTTPException]:
     """외부 임베딩/LLM 공급자의 쿼터 초과 오류를 429로 변환."""
@@ -693,6 +729,17 @@ def _as_quota_http_exception(exc: Exception) -> Optional[HTTPException]:
                 detail="임베딩 공급자 요청이 제한되었습니다(429). 잠시 후 다시 시도하세요.",
             )
 
+        quota_exc = _extract_quota_message_from_payload(getattr(response, "json", None))
+        if quota_exc:
+            return quota_exc
+        quota_exc = _extract_quota_message_from_payload(getattr(response, "text", None))
+        if quota_exc:
+            return quota_exc
+        for attr_name in ("body", "error", "detail", "message"):
+            quota_exc = _extract_quota_message_from_payload(getattr(current, attr_name, None))
+            if quota_exc:
+                return quota_exc
+            
         for message in (str(current), repr(current), *[str(arg) for arg in getattr(current, "args", [])]):
             quota_exc = _matches_quota_message(message)
             if quota_exc:
