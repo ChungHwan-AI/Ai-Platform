@@ -36,3 +36,12 @@ build/
 .env
 */.env
 
+# Spring config
+application-*.yml
+application-*.yaml
+application.yml
+
+### OneAsk local runtime data ###
+rag-backend/uploads/
+libs/
+
