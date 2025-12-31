@@ -353,7 +353,7 @@ def _run_retrieval_with_recovery(
 
     try:
         return query_text(question, k=top_k, metadata_filter=metadata_filter)
-    except ValueError as err:
+    except Exception as err:
         message = str(err)
         if "dimensionality" in message:
             logger.warning(
@@ -907,7 +907,7 @@ async def upload(
         try:
             vectordb.add_documents(docs)
             persist_vectordb_if_possible(vectordb)
-        except ValueError as err:
+        except Exception as err:
             message = str(err)
             if "does not match collection dimensionality" in message:
                 hint = (

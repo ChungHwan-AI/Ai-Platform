@@ -2,6 +2,7 @@
 import logging  # 벡터 스토어 초기화 과정을 로깅하기 위해 로깅 모듈을 임포트함
 import os
 import re  # 컬렉션 이름에 사용할 접미사를 안전하게 정규화하기 위한 모듈
+import ipaddress
 from pathlib import Path
 from langchain_chroma import Chroma  # 신규 분리 패키지에서 Chroma 래퍼를 임포트해 경고를 제거
 from chromadb import PersistentClient  # 컬렉션 삭제 등 직접 제어를 위해 Chroma 기본 클라이언트를 임포트함
@@ -9,7 +10,38 @@ from chromadb.config import Settings  # 텔레메트리 및 저장소 설정을 
 
 logger = logging.getLogger(__name__)  # 모듈 전용 로거를 생성해 상황별 정보를 출력
 
-_COLLECTION_OVERRIDE = os.getenv("CHROMA_COLLECTION")  # 사용자가 직접 지정한 컬렉션 이름을 우선 저장
+def _is_valid_collection_name(name: str) -> bool:
+    if not (3 <= len(name) <= 63):
+        return False
+    if not re.match(r"^[0-9A-Za-z].*[0-9A-Za-z]$", name):
+        return False
+    if not re.match(r"^[0-9A-Za-z_-]+$", name):
+        return False
+    if ".." in name:
+        return False
+    try:
+        ipaddress.IPv4Address(name)
+        return False
+    except ValueError:
+        return True
+    
+def _get_env_collection_override() -> str | None:
+    """환경 변수 컬렉션 이름에서 불필요한 공백을 제거해 반환"""
+
+    raw = os.getenv("CHROMA_COLLECTION")
+    if raw is None:
+        return None
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    if not _is_valid_collection_name(cleaned):
+        logger.warning(
+            "CHROMA_COLLECTION 값이 규칙에 맞지 않아 무시합니다: %r",
+            cleaned,
+        )
+        return None
+    return cleaned
+
 _DEFAULT_COLLECTION_BASE = "oneask_docs"  # 컬렉션 이름 기본 접두사를 상수로 관리
 
 def _resolve_chroma_dir():
@@ -23,7 +55,7 @@ def _resolve_chroma_dir():
     return str(p.resolve())
 
 CHROMA_DIR = _resolve_chroma_dir()
-CHROMA_COLLECTION = _COLLECTION_OVERRIDE or _DEFAULT_COLLECTION_BASE  # 초기 컬렉션 이름을 환경 변수 또는 기본값으로 설정
+CHROMA_COLLECTION = _DEFAULT_COLLECTION_BASE  # 초기 컬렉션 이름은 기본값으로 설정 (환경 변수는 매 요청마다 확인)
 
 # Chroma v0.5+ 에서는 persist_directory 기반 레거시 설정이 더 이상 허용되지 않으므로
 # 새로운 PersistentClient(path=...) 생성 방식을 따른다. 텔레메트리만 비활성화한다.
@@ -42,8 +74,9 @@ def _sanitize_suffix(raw: str) -> str:
 def _select_collection_name() -> str:
     """임베딩 백엔드 정보를 반영한 컬렉션 이름을 선택"""
 
-    if _COLLECTION_OVERRIDE:
-        return _COLLECTION_OVERRIDE  # 사용자가 지정했다면 그대로 사용
+    override = _get_env_collection_override()
+    if override:
+        return override  # 사용자가 지정했다면 그대로 사용
 
     try:
         from config_embed import get_embedding_backend_info  # 순환 참조를 피하기 위해 지연 임포트

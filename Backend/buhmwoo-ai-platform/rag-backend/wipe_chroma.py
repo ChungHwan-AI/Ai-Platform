@@ -5,7 +5,8 @@ from chromadb import PersistentClient
 def main():
     ap = argparse.ArgumentParser(description="Wipe Chroma collections")
     ap.add_argument("--dir", default=os.getenv("CHROMA_DIR", "./chroma_db"), help="Chroma dir")
-    ap.add_argument("--collection", default=os.getenv("CHROMA_COLLECTION", "oneask_docs"),
+    env_collection = os.getenv("CHROMA_COLLECTION", "oneask_docs").strip()
+    ap.add_argument("--collection", default=env_collection,
                     help="target collection (ignored when --all given)")
     ap.add_argument("--all", action="store_true", help="delete ALL collections in this dir")
     ap.add_argument("--dry-run", action="store_true", help="show what would be deleted")
