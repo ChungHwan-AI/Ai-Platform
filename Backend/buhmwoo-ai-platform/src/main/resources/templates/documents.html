@@ -290,7 +290,8 @@
 
                 <div class="border rounded p-3 mb-4" id="documentDetailPanel"
                      th:attr="data-download-base=@{/api/documents/download/},
-                              data-delete-base=@{/documents/}">
+                              data-delete-base=@{/documents/},
+                              data-summary-excel-base=@{/api/documents/}">
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <h2 class="h6 mb-0">선택한 문서</h2>
@@ -321,7 +322,8 @@
                         <div class="d-flex flex-wrap gap-2">
                             <a id="downloadLink" class="btn btn-sm btn-outline-secondary disabled"
                                href="#" target="_blank" aria-disabled="true">다운로드</a>
-
+                            <a id="summaryExcelLink" class="btn btn-sm btn-outline-success disabled"
+                               href="#" target="_blank" aria-disabled="true">요약 엑셀</a>
                             <form id="deleteForm" method="post"
                                   class="d-none"
                                   onsubmit="return confirm('문서를 삭제하시겠습니까?');">
@@ -624,6 +626,7 @@
         var sizeEl = document.getElementById('detailSize');
 
         var downloadLink = document.getElementById('downloadLink');
+        var summaryExcelLink = document.getElementById('summaryExcelLink');
         var deleteForm = document.getElementById('deleteForm');
         var applyButton = document.getElementById('applySelectionButton');
         var previewButton = document.getElementById('previewButton');
@@ -632,6 +635,7 @@
         var panel = document.getElementById('documentDetailPanel');
         var downloadBase = panel ? panel.dataset.downloadBase : '';
         var deleteBase = panel ? panel.dataset.deleteBase : '';
+        var summaryExcelLink = document.getElementById('summaryExcelLink');        
 
         rows.forEach(function (row) {
             row.addEventListener('click', function () {
@@ -661,6 +665,11 @@
                 if (downloadBase && selectedDocument.uuid) {
                     downloadLink.href = downloadBase + selectedDocument.uuid;
                     downloadLink.classList.remove('disabled');
+                }
+
+                if (summaryExcelBase && selectedDocument.uuid) {
+                    summaryExcelLink.href = summaryExcelBase + selectedDocument.uuid + '/summary.xlsx';
+                    summaryExcelLink.classList.remove('disabled');
                 }
 
                 if (deleteBase && selectedDocument.uuid) {
@@ -701,6 +710,10 @@
         downloadLink.href = '#';
         downloadLink.classList.add('disabled');
 
+        var summaryExcelLink = document.getElementById('summaryExcelLink');
+        summaryExcelLink.href = '#';
+        summaryExcelLink.classList.add('disabled');
+                
         var deleteForm = document.getElementById('deleteForm');
         deleteForm.action = '';
         deleteForm.classList.add('d-none');
@@ -929,7 +942,7 @@
                 openSummaryModal();
             });
         }
-                
+
         var searchModalEl = document.getElementById('searchModal');
         if (searchModalEl.dataset.openSearchModal === 'true') {
             new bootstrap.Modal(searchModalEl).show();

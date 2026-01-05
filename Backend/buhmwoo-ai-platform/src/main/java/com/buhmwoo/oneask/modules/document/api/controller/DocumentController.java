@@ -126,6 +126,15 @@ public class DocumentController {
     public ApiResponseDto<QuestionAnswerResponseDto> summarize(@PathVariable String uuid) {
         return documentService.summarizeDocument(uuid);
     }
+    
+    @Operation(summary = "문서 요약 엑셀 다운로드", description = "선택된 문서 요약을 엑셀 파일로 다운로드합니다.")
+    @GetMapping(
+        value = "/{uuid}/summary.xlsx",
+        produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    public ResponseEntity<Resource> downloadSummaryExcel(@PathVariable String uuid) {
+        return documentService.downloadSummaryExcel(uuid);
+    }
         
     @PostMapping("/{uuid}/ask")
     public ApiResponseDto<QuestionAnswerResponseDto> askPost(@PathVariable String uuid,

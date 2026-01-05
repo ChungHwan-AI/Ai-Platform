@@ -30,11 +30,18 @@ import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
 import org.apache.poi.xslf.usermodel.XSLFShape;
 import org.apache.poi.xslf.usermodel.XSLFTextShape;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -54,6 +61,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.SocketTimeoutException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -404,6 +412,82 @@ public class DocumentServiceImpl implements DocumentService {
         }
         String prompt = "선택된 문서의 핵심 내용을 한국어로 5줄 이내로 요약해줘.";
         return ask(uuid, prompt, BotMode.STRICT);
+    }
+
+    @Override
+    public ResponseEntity<Resource> downloadSummaryExcel(String uuid) {
+        if (!StringUtils.hasText(uuid)) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Optional<Document> optionalDoc = documentRepository.findByUuid(uuid);
+        if (optionalDoc.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        ApiResponseDto<QuestionAnswerResponseDto> summaryResponse = summarizeDocument(uuid);
+        if (!summaryResponse.isSuccess() || summaryResponse.getData() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        String summaryText = Optional.ofNullable(summaryResponse.getData().getAnswer()).orElse("").trim();
+        if (!StringUtils.hasText(summaryText)) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Document document = optionalDoc.get();
+        String baseFileName = Optional.ofNullable(document.getFileName()).orElse("summary");
+        String outputFileName = baseFileName + "_summary.xlsx";
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("summary");
+
+            Font headerFont = workbook.createFont();
+            headerFont.setBold(true);
+            CellStyle headerStyle = workbook.createCellStyle();
+            headerStyle.setFont(headerFont);
+
+            CellStyle wrapStyle = workbook.createCellStyle();
+            wrapStyle.setWrapText(true);
+
+            Row headerRow = sheet.createRow(0);
+            String[] headers = {"파일명", "UUID", "요약", "생성일시"};
+            for (int i = 0; i < headers.length; i++) {
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(headers[i]);
+                cell.setCellStyle(headerStyle);
+            }
+
+            Row dataRow = sheet.createRow(1);
+            dataRow.createCell(0).setCellValue(baseFileName);
+            dataRow.createCell(1).setCellValue(uuid);
+            Cell summaryCell = dataRow.createCell(2);
+            summaryCell.setCellValue(summaryText);
+            summaryCell.setCellStyle(wrapStyle);
+            dataRow.createCell(3).setCellValue(LocalDateTime.now().toString());
+
+            sheet.setColumnWidth(0, 40 * 256);
+            sheet.setColumnWidth(1, 40 * 256);
+            sheet.setColumnWidth(2, 120 * 256);
+            sheet.setColumnWidth(3, 30 * 256);
+
+            workbook.write(out);
+
+            byte[] bytes = out.toByteArray();
+            ByteArrayResource resource = new ByteArrayResource(bytes);
+            String encodedFilename = URLEncoder.encode(outputFileName, StandardCharsets.UTF_8)
+                .replaceAll("\\+", "%20");
+
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedFilename)
+                .contentLength(bytes.length)
+                .body(resource);
+        } catch (IOException e) {
+            log.error("요약 엑셀 생성 실패: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
     /** 분류 결과 + 모드 기반 최종 Intent 결정 */

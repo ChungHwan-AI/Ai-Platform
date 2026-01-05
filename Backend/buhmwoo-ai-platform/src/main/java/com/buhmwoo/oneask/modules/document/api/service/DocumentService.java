@@ -52,6 +52,11 @@ public interface DocumentService {
     ApiResponseDto<QuestionAnswerResponseDto> summarizeDocument(String uuid);    
 
     /**
+     * 문서 요약을 엑셀 파일로 내려받습니다. // ✅ 요약을 스프레드시트로 제공하는 기능을 정의합니다.
+     */
+    ResponseEntity<Resource> downloadSummaryExcel(String uuid);    
+
+    /**
      * 기존 호출부 호환을 위해 기본 STRICT 모드로 질의를 수행합니다. // ✅ 모드 파라미터를 생략하더라도 이전 API가 그대로 동작함을 보장합니다.
      */
     default ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question) {
