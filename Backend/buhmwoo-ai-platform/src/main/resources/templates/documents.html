@@ -635,7 +635,7 @@
         var panel = document.getElementById('documentDetailPanel');
         var downloadBase = panel ? panel.dataset.downloadBase : '';
         var deleteBase = panel ? panel.dataset.deleteBase : '';
-        var summaryExcelLink = document.getElementById('summaryExcelLink');        
+        var summaryExcelBase = panel ? panel.dataset.summaryExcelBase : '';  
 
         rows.forEach(function (row) {
             row.addEventListener('click', function () {
@@ -713,7 +713,7 @@
         var summaryExcelLink = document.getElementById('summaryExcelLink');
         summaryExcelLink.href = '#';
         summaryExcelLink.classList.add('disabled');
-                
+
         var deleteForm = document.getElementById('deleteForm');
         deleteForm.action = '';
         deleteForm.classList.add('d-none');
