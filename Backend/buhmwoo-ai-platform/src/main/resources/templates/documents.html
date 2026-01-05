@@ -14,7 +14,9 @@
         /* ✅ 히스토리 영역을 채팅창처럼 고정 높이와 스크롤이 가능한 형태로 만듭니다. */
         #answerHistoryList { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; }        
         /* ✅ 질문 전송 시 사용자에게 생각 중임을 알려주는 레이어 스타일입니다. */
-        .thinking-indicator { background: rgba(248, 250, 252, 0.85); border: 1px dashed #6366f1; }        
+        .thinking-indicator { background: rgba(248, 250, 252, 0.85); border: 1px dashed #6366f1; } 
+        .search-highlight { background: #fde68a; padding: 0 2px; border-radius: 4px; }
+        .suggestion-list { max-height: 220px; overflow-y: auto; z-index: 1050; }               
     </style>
 </head>
 <body>
@@ -221,10 +223,12 @@
             <div class="modal-body">
 
                 <form class="row g-3 mb-4" method="get" th:action="@{/documents}">
-                    <div class="col-md-3">
+                    <div class="col-md-3 position-relative">
                         <label for="searchFileName" class="form-label">파일명</label>
                         <input type="text" class="form-control" id="searchFileName" name="fileName"
                                th:value="${searchParams.fileName}">
+                        <div id="fileNameSuggestions"
+                             class="list-group position-absolute w-100 shadow-sm suggestion-list d-none"></div>                               
                     </div>
                     <div class="col-md-3">
                         <label for="searchUploadedBy" class="form-label">업로더</label>
@@ -272,8 +276,8 @@
                                      data-doc-size=${#numbers.formatInteger(doc.size, 1, 'COMMA')}">
                             <td class="small text-break" th:text="${doc.uuid}"></td>
                             <td>
-                                <div class="fw-semibold" th:text="${doc.fileName}"></div>
-                                <div class="small text-muted" th:text="${doc.description}"></div>
+                                <div class="fw-semibold doc-file-name" th:text="${doc.fileName}"></div>
+                                <div class="small text-muted doc-description" th:text="${doc.description}"></div>
                             </td>
                             <td th:text="${doc.uploadedBy}"></td>
                             <td th:text="${#temporals.format(doc.uploadedAt, 'yyyy-MM-dd HH:mm')}"></td>
@@ -323,6 +327,11 @@
                                   onsubmit="return confirm('문서를 삭제하시겠습니까?');">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">삭제</button>
                             </form>
+
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    id="previewButton" disabled>미리보기</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    id="summaryButton" disabled>요약 보기</button>
 
                             <button type="button" class="btn btn-sm btn-primary"
                                     id="applySelectionButton" disabled>이 문서에 질문</button>
@@ -383,6 +392,46 @@
     </div>
 </div>
 
+<!-- 문서 미리보기 모달 -->
+<div class="modal fade" id="previewModal" tabindex="-1" aria-labelledby="previewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h1 class="modal-title fs-5" id="previewModalLabel">문서 미리보기</h1>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <div class="ratio ratio-16x9 bg-light border rounded">
+                    <iframe id="previewFrame" title="PDF Preview" class="w-100 h-100 border-0"></iframe>
+                </div>
+                <p class="small text-muted mt-2 mb-0">
+                    PDF가 아닌 문서는 브라우저 미리보기가 지원되지 않을 수 있습니다.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 문서 요약 모달 -->
+<div class="modal fade" id="summaryModal" tabindex="-1" aria-labelledby="summaryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h1 class="modal-title fs-5" id="summaryModalLabel">문서 요약</h1>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <div id="summaryLoading" class="d-flex align-items-center gap-2 text-muted">
+                    <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                    <span>요약을 생성하고 있습니다...</span>
+                </div>
+                <div id="summaryError" class="alert alert-danger d-none mt-3"></div>
+                <pre id="summaryContent" class="mb-0 d-none"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
@@ -419,6 +468,147 @@
         if (target) target.checked = true;
     }
 
+    function escapeRegExp(text) {
+        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function highlightMatches(keyword) {
+        if (!keyword) return;
+
+        var escaped = escapeRegExp(keyword);
+        var regex = new RegExp('(' + escaped + ')', 'gi');
+        var targets = document.querySelectorAll('.doc-file-name, .doc-description');
+
+        targets.forEach(function (node) {
+            var raw = node.textContent || '';
+            if (!raw) return;
+            node.innerHTML = raw.replace(regex, '<mark class="search-highlight">$1</mark>');
+        });
+    }
+
+    function debounce(fn, wait) {
+        var timeout;
+        return function () {
+            var context = this;
+            var args = arguments;
+            clearTimeout(timeout);
+            timeout = setTimeout(function () {
+                fn.apply(context, args);
+            }, wait);
+        };
+    }
+
+    function setupFileNameSuggestions() {
+        var input = document.getElementById('searchFileName');
+        var list = document.getElementById('fileNameSuggestions');
+        if (!input || !list) return;
+
+        function hideSuggestions() {
+            list.classList.add('d-none');
+            list.innerHTML = '';
+        }
+
+        function renderSuggestions(items) {
+            list.innerHTML = '';
+            if (!items || items.length === 0) {
+                hideSuggestions();
+                return;
+            }
+
+            items.forEach(function (item) {
+                var option = document.createElement('button');
+                option.type = 'button';
+                option.className = 'list-group-item list-group-item-action';
+                option.innerHTML =
+                    '<div class="fw-semibold">' + (item.fileName || '') + '</div>' +
+                    (item.description ? '<div class="small text-muted">' + item.description + '</div>' : '');
+                option.addEventListener('click', function () {
+                    input.value = item.fileName || '';
+                    hideSuggestions();
+                    input.focus();
+                });
+                list.appendChild(option);
+            });
+            list.classList.remove('d-none');
+        }
+
+        var fetchSuggestions = debounce(function () {
+            var keyword = input.value.trim();
+            if (keyword.length < 2) {
+                hideSuggestions();
+                return;
+            }
+
+            fetch('/api/documents/suggest?keyword=' + encodeURIComponent(keyword) + '&limit=6')
+                .then(function (response) { return response.json(); })
+                .then(function (data) {
+                    if (!data || !data.success) {
+                        hideSuggestions();
+                        return;
+                    }
+                    renderSuggestions(data.data || []);
+                })
+                .catch(function () {
+                    hideSuggestions();
+                });
+        }, 200);
+
+        input.addEventListener('input', fetchSuggestions);
+        input.addEventListener('blur', function () {
+            setTimeout(hideSuggestions, 150);
+        });
+        document.addEventListener('click', function (event) {
+            if (!list.contains(event.target) && event.target !== input) {
+                hideSuggestions();
+            }
+        });
+    }
+
+    function openPreviewModal() {
+        if (!selectedDocument || !selectedDocument.uuid) return;
+        var frame = document.getElementById('previewFrame');
+        if (frame) {
+            frame.src = '/api/documents/download/' + selectedDocument.uuid;
+        }
+        var modal = new bootstrap.Modal(document.getElementById('previewModal'));
+        modal.show();
+    }
+
+    function openSummaryModal() {
+        if (!selectedDocument || !selectedDocument.uuid) return;
+
+        var loadingEl = document.getElementById('summaryLoading');
+        var contentEl = document.getElementById('summaryContent');
+        var errorEl = document.getElementById('summaryError');
+
+        loadingEl.classList.remove('d-none');
+        contentEl.classList.add('d-none');
+        errorEl.classList.add('d-none');
+        contentEl.textContent = '';
+        errorEl.textContent = '';
+
+        var modal = new bootstrap.Modal(document.getElementById('summaryModal'));
+        modal.show();
+
+        fetch('/api/documents/' + selectedDocument.uuid + '/summary')
+            .then(function (response) { return response.json(); })
+            .then(function (data) {
+                loadingEl.classList.add('d-none');
+                if (!data || !data.success) {
+                    errorEl.textContent = (data && data.message) ? data.message : '요약 생성에 실패했습니다.';
+                    errorEl.classList.remove('d-none');
+                    return;
+                }
+                contentEl.textContent = data.data && data.data.answer ? data.data.answer : '';
+                contentEl.classList.remove('d-none');
+            })
+            .catch(function () {
+                loadingEl.classList.add('d-none');
+                errorEl.textContent = '요약 요청 중 오류가 발생했습니다.';
+                errorEl.classList.remove('d-none');
+            });
+    }
+
     // ✅ 검색 테이블 행을 클릭했을 때 상세 정보를 패널과 버튼에 반영합니다.
     function bindRowSelection() {
         var rows = Array.from(document.querySelectorAll('[data-doc-uuid]'));
@@ -436,6 +626,8 @@
         var downloadLink = document.getElementById('downloadLink');
         var deleteForm = document.getElementById('deleteForm');
         var applyButton = document.getElementById('applySelectionButton');
+        var previewButton = document.getElementById('previewButton');
+        var summaryButton = document.getElementById('summaryButton');        
 
         var panel = document.getElementById('documentDetailPanel');
         var downloadBase = panel ? panel.dataset.downloadBase : '';
@@ -477,6 +669,8 @@
                 }
 
                 applyButton.disabled = false;
+                if (previewButton) previewButton.disabled = false;
+                if (summaryButton) summaryButton.disabled = false;                
             });
         });
     }
@@ -496,6 +690,12 @@
 
         var applyButton = document.getElementById('applySelectionButton');
         if (applyButton) applyButton.disabled = true;
+
+        var previewButton = document.getElementById('previewButton');
+        if (previewButton) previewButton.disabled = true;
+
+        var summaryButton = document.getElementById('summaryButton');
+        if (summaryButton) summaryButton.disabled = true;        
 
         var downloadLink = document.getElementById('downloadLink');
         downloadLink.href = '#';
@@ -687,6 +887,12 @@
         applyInitialMode();
         bindRowSelection();
         bindThinkingIndicator();
+        setupFileNameSuggestions();
+
+        var keywordInput = document.getElementById('searchFileName');
+        if (keywordInput && keywordInput.value) {
+            highlightMatches(keywordInput.value.trim());
+        }
 
         mergeLatestAnswer();
         renderHistory(loadHistory());
@@ -710,6 +916,20 @@
             clearSelection();
         });
 
+        var previewButton = document.getElementById('previewButton');
+        if (previewButton) {
+            previewButton.addEventListener('click', function () {
+                openPreviewModal();
+            });
+        }
+
+        var summaryButton = document.getElementById('summaryButton');
+        if (summaryButton) {
+            summaryButton.addEventListener('click', function () {
+                openSummaryModal();
+            });
+        }
+                
         var searchModalEl = document.getElementById('searchModal');
         if (searchModalEl.dataset.openSearchModal === 'true') {
             new bootstrap.Modal(searchModalEl).show();

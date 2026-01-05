@@ -33,5 +33,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             Pageable pageable   // ✅ 페이징 및 정렬 정보
     );    
     
+    Page<Document> findByFileNameContainingIgnoreCase(String fileName, Pageable pageable);    
+    
     List<Document> findAllByFileNameIgnoreCase(String fileName);    
 }

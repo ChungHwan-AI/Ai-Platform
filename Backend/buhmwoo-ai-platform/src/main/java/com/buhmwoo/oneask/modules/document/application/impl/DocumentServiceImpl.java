@@ -4,6 +4,7 @@ import com.buhmwoo.oneask.common.config.OneAskProperties;
 import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentSuggestionResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerSourceDto;
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
@@ -38,7 +39,9 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -270,6 +273,20 @@ public class DocumentServiceImpl implements DocumentService {
         return PageResponse.from(mapped);
     }
 
+    @Transactional(readOnly = true)
+    @Override
+    public List<DocumentSuggestionResponseDto> getDocumentSuggestions(String keyword, int limit) {
+        String trimmedKeyword = Optional.ofNullable(keyword).map(String::trim).orElse("");
+        if (!StringUtils.hasText(trimmedKeyword)) {
+            return List.of();
+        }
+
+        int safeLimit = Math.min(Math.max(limit, 1), 10);
+        Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "uploadedAt"));
+        Page<Document> page = documentRepository.findByFileNameContainingIgnoreCase(trimmedKeyword, pageable);
+        return page.map(this::toSuggestionDto).getContent();
+    }
+
     /** 다운로드 (UUID 기반) */
     @Override
     public ResponseEntity<Resource> downloadFileByUuid(String uuid) {
@@ -378,6 +395,15 @@ public class DocumentServiceImpl implements DocumentService {
                     buildFallbackAnswer(questionText, mode, docId == null);
             return ApiResponseDto.fail("RAG 호출 실패: " + e.getMessage(), degraded);
         }
+    }
+
+    @Override
+    public ApiResponseDto<QuestionAnswerResponseDto> summarizeDocument(String uuid) {
+        if (!StringUtils.hasText(uuid)) {
+            return ApiResponseDto.fail("요약 실패: 문서 UUID가 비어 있습니다.");
+        }
+        String prompt = "선택된 문서의 핵심 내용을 한국어로 5줄 이내로 요약해줘.";
+        return ask(uuid, prompt, BotMode.STRICT);
     }
 
     /** 분류 결과 + 모드 기반 최종 Intent 결정 */
@@ -944,4 +970,12 @@ public class DocumentServiceImpl implements DocumentService {
                 .indexingError(document.getIndexingError())
                 .build();
     }
+    private DocumentSuggestionResponseDto toSuggestionDto(Document document) {
+        return DocumentSuggestionResponseDto.builder()
+                .uuid(document.getUuid())
+                .fileName(document.getFileName())
+                .uploadedAt(document.getUploadedAt())
+                .description(document.getDescription())
+                .build();
+    }    
 }

@@ -4,6 +4,7 @@ import com.buhmwoo.oneask.common.dto.ApiResponseDto;
 import com.buhmwoo.oneask.common.dto.PageResponse;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentListItemResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.DocumentPageResponseDocs;
+import com.buhmwoo.oneask.modules.document.api.dto.DocumentSuggestionResponseDto;
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionAnswerResponseDto; // ✅ GPT 응답 포맷을 재사용하기 위해 임포트합니다.
 import com.buhmwoo.oneask.modules.document.api.dto.QuestionRequestDto; // ✅ POST 본문으로 질문을 받을 때 사용합니다.
 import com.buhmwoo.oneask.modules.document.api.service.DocumentService;
@@ -82,6 +83,16 @@ public class DocumentController {
         return ApiResponseDto.ok(page, "문서 목록 조회 성공");   // ✅ 표준 ApiResponseDto 래핑
     }
     
+    @Operation(summary = "문서 자동완성 추천", description = "파일명 키워드로 자동완성 추천 목록을 반환합니다.")
+    @GetMapping("/suggest")
+    public ApiResponseDto<List<DocumentSuggestionResponseDto>> getSuggestions(
+            @RequestParam("keyword") String keyword,
+            @RequestParam(value = "limit", defaultValue = "8") int limit) {
+        List<DocumentSuggestionResponseDto> suggestions =
+                documentService.getDocumentSuggestions(keyword, limit);
+        return ApiResponseDto.ok(suggestions, "문서 추천 목록 조회 성공");
+    }
+
     @Operation(
         summary = "파일 다운로드 (UUID)",
         description = "UUID를 기준으로 파일을 다운로드합니다.",
@@ -110,6 +121,12 @@ public class DocumentController {
         return documentService.ask(uuid, question, mode);
     }
 
+    @Operation(summary = "문서 요약", description = "선택된 문서를 요약해 제공합니다.")
+    @GetMapping("/{uuid}/summary")
+    public ApiResponseDto<QuestionAnswerResponseDto> summarize(@PathVariable String uuid) {
+        return documentService.summarizeDocument(uuid);
+    }
+        
     @PostMapping("/{uuid}/ask")
     public ApiResponseDto<QuestionAnswerResponseDto> askPost(@PathVariable String uuid,
                                                              @Valid @RequestBody QuestionRequestDto payload) {
