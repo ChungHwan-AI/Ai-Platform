@@ -42,6 +42,11 @@ public interface DocumentService {
     ResponseEntity<Resource> downloadFileByUuid(String uuid);
 
     /**
+     * UUID 기준으로 저장된 파일을 브라우저 미리보기로 제공합니다. // ✅ 인라인 미리보기 동작을 설명합니다.
+     */
+    ResponseEntity<Resource> previewFileByUuid(String uuid);
+        
+    /**
      * 특정 문서 또는 전체 문서를 대상으로 RAG 질의를 수행합니다. // ✅ 질문 처리 기능을 설명합니다.
      */
     ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode);

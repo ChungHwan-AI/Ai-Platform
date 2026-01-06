@@ -112,6 +112,25 @@ public class DocumentController {
         return documentService.downloadFileByUuid(uuid);
     }
 
+    @Operation(
+        summary = "파일 미리보기 (UUID)",
+        description = "UUID를 기준으로 브라우저에서 인라인 미리보기를 제공합니다.",
+        responses = {
+            @ApiResponse(
+                responseCode = "200",
+                description = "파일 미리보기 성공",
+                content = @Content(
+                    mediaType = "application/octet-stream",
+                    schema = @Schema(type = "string", format = "binary")
+                )
+            )
+        }
+    )
+    @GetMapping("/preview/{uuid}")
+    public ResponseEntity<Resource> previewFileByUuid(@PathVariable String uuid) {
+        return documentService.previewFileByUuid(uuid);
+    }
+        
     @Operation(summary = "문서 기반 질문", description = "업로드된 문서(UUID) 범위에서 질문에 답합니다.")
 
     @GetMapping("/{uuid}/ask")

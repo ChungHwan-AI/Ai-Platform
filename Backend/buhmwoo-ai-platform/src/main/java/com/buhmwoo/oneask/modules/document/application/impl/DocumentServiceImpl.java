@@ -321,6 +321,42 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    /** 미리보기 (UUID 기반) */
+    @Override
+    public ResponseEntity<Resource> previewFileByUuid(String uuid) {
+        var optionalDoc = documentRepository.findByUuid(uuid);
+        if (optionalDoc.isEmpty()) return ResponseEntity.notFound().build();
+
+        var document = optionalDoc.get();
+        try {
+            Path filePath = Paths.get(document.getFilePath());
+            Resource resource = new UrlResource(filePath.toUri());
+            if (!resource.exists() || !resource.isReadable()) {
+                return ResponseEntity.notFound().build();
+            }
+
+            String encodedFilename = URLEncoder.encode(document.getFileName(), StandardCharsets.UTF_8)
+                    .replaceAll("\\+", "%20");
+            MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
+            try {
+                String detectedType = Files.probeContentType(filePath);
+                if (StringUtils.hasText(detectedType)) {
+                    mediaType = MediaType.parseMediaType(detectedType);
+                }
+            } catch (Exception ex) {
+                log.debug("미리보기 콘텐츠 타입 판별 실패: {}", ex.getMessage());
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(mediaType)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFilename)
+                    .body(resource);
+        } catch (Exception e) {
+            log.error("파일 미리보기 실패: {}", e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+        
     /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
     @Override
     public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode) {
