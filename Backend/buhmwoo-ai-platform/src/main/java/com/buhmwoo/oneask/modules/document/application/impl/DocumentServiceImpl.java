@@ -357,7 +357,9 @@ public class DocumentServiceImpl implements DocumentService {
                 } catch (Exception ex) {
                     log.debug("미리보기 콘텐츠 타입 판별 실패: {}", ex.getMessage());            
                 }
-            
+            }                
+            if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
+                mediaType = guessMediaType(document.getFileName());            
             }
 
             return ResponseEntity.ok()
@@ -368,6 +370,29 @@ public class DocumentServiceImpl implements DocumentService {
             log.error("파일 미리보기 실패: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
+    }
+
+    private MediaType guessMediaType(String fileName) {
+        String normalized = Optional.ofNullable(fileName).map(String::trim).orElse("").toLowerCase();
+        if (normalized.endsWith(".pdf")) {
+            return MediaType.APPLICATION_PDF;
+        }
+        if (normalized.endsWith(".png")) {
+            return MediaType.IMAGE_PNG;
+        }
+        if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) {
+            return MediaType.IMAGE_JPEG;
+        }
+        if (normalized.endsWith(".gif")) {
+            return MediaType.IMAGE_GIF;
+        }
+        if (normalized.endsWith(".txt")) {
+            return MediaType.TEXT_PLAIN;
+        }
+        if (normalized.endsWith(".csv")) {
+            return new MediaType("text", "csv");
+        }
+        return MediaType.APPLICATION_OCTET_STREAM;
     }
 
     /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
