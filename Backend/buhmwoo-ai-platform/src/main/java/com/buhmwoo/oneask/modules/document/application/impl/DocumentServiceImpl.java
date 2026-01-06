@@ -338,13 +338,26 @@ public class DocumentServiceImpl implements DocumentService {
             String encodedFilename = URLEncoder.encode(document.getFileName(), StandardCharsets.UTF_8)
                     .replaceAll("\\+", "%20");
             MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
-            try {
-                String detectedType = Files.probeContentType(filePath);
-                if (StringUtils.hasText(detectedType)) {
-                    mediaType = MediaType.parseMediaType(detectedType);
+            String storedContentType = Optional.ofNullable(document.getContentType())
+                    .map(String::trim)
+                    .orElse("");
+            if (StringUtils.hasText(storedContentType)) {
+                try {
+                    mediaType = MediaType.parseMediaType(storedContentType);
+                } catch (Exception ex) {
+                    log.debug("미리보기 저장된 콘텐츠 타입 파싱 실패: {}", ex.getMessage());
                 }
-            } catch (Exception ex) {
-                log.debug("미리보기 콘텐츠 타입 판별 실패: {}", ex.getMessage());
+            }
+            if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
+                try {
+                    String detectedType = Files.probeContentType(filePath);
+                    if (StringUtils.hasText(detectedType)) {
+                        mediaType = MediaType.parseMediaType(detectedType);
+                    }
+                } catch (Exception ex) {
+                    log.debug("미리보기 콘텐츠 타입 판별 실패: {}", ex.getMessage());            
+                }
+            
             }
 
             return ResponseEntity.ok()
@@ -356,7 +369,7 @@ public class DocumentServiceImpl implements DocumentService {
             return ResponseEntity.internalServerError().build();
         }
     }
-        
+
     /** 문서 기반 질의: 검색 → GPT 호출 → 응답 포맷팅 전체 파이프라인 */
     @Override
     public ApiResponseDto<QuestionAnswerResponseDto> ask(String uuid, String question, BotMode mode) {
