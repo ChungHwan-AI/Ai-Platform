@@ -100,10 +100,28 @@ public class DocumentController {
             @ApiResponse(
                 responseCode = "200",
                 description = "파일 다운로드 성공",
-                content = @Content(
-                    mediaType = "application/octet-stream",
-                    schema = @Schema(type = "string", format = "binary")
-                )
+                content = {
+                    @Content(
+                        mediaType = MediaType.APPLICATION_PDF_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.IMAGE_JPEG_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.IMAGE_PNG_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.TEXT_PLAIN_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    )
+                }
             )
         }
     )
@@ -130,7 +148,7 @@ public class DocumentController {
     public ResponseEntity<Resource> previewFileByUuid(@PathVariable String uuid) {
         return documentService.previewFileByUuid(uuid);
     }
-        
+
     @Operation(summary = "문서 기반 질문", description = "업로드된 문서(UUID) 범위에서 질문에 답합니다.")
 
     @GetMapping("/{uuid}/ask")
