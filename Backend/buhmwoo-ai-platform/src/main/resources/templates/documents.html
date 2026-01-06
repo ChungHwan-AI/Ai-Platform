@@ -570,7 +570,7 @@
         if (!selectedDocument || !selectedDocument.uuid) return;
         var frame = document.getElementById('previewFrame');
         if (frame) {
-            frame.src = '/api/documents/download/' + selectedDocument.uuid;
+            frame.src = '/api/documents/preview/' + selectedDocument.uuid;
         }
         var modal = new bootstrap.Modal(document.getElementById('previewModal'));
         modal.show();
