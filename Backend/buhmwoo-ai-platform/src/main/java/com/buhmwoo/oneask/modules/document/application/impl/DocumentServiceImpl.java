@@ -330,7 +330,9 @@ public class DocumentServiceImpl implements DocumentService {
         var document = optionalDoc.get();
         try {
             Path filePath = Paths.get(document.getFilePath());
-            Resource resource = new UrlResource(filePath.toUri());
+            Path previewPath = ensurePreviewPdf(filePath);
+            Path resolvedPath = previewPath != null ? previewPath : filePath;
+            Resource resource = new UrlResource(resolvedPath.toUri());
             if (!resource.exists() || !resource.isReadable()) {
                 return ResponseEntity.notFound().build();
             }
@@ -338,19 +340,24 @@ public class DocumentServiceImpl implements DocumentService {
             String encodedFilename = URLEncoder.encode(document.getFileName(), StandardCharsets.UTF_8)
                     .replaceAll("\\+", "%20");
             MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
-            String storedContentType = Optional.ofNullable(document.getContentType())
-                    .map(String::trim)
-                    .orElse("");
-            if (StringUtils.hasText(storedContentType)) {
-                try {
-                    mediaType = MediaType.parseMediaType(storedContentType);
-                } catch (Exception ex) {
-                    log.debug("미리보기 저장된 콘텐츠 타입 파싱 실패: {}", ex.getMessage());
+            if (previewPath != null) {
+                mediaType = MediaType.APPLICATION_PDF;
+            }
+            if (previewPath == null) {
+                String storedContentType = Optional.ofNullable(document.getContentType())
+                        .map(String::trim)
+                        .orElse("");
+                if (StringUtils.hasText(storedContentType)) {
+                    try {
+                        mediaType = MediaType.parseMediaType(storedContentType);
+                    } catch (Exception ex) {
+                        log.debug("미리보기 저장된 콘텐츠 타입 파싱 실패: {}", ex.getMessage());
+                    }
                 }
             }
             if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
                 try {
-                    String detectedType = Files.probeContentType(filePath);
+                    String detectedType = Files.probeContentType(resolvedPath);
                     if (StringUtils.hasText(detectedType)) {
                         mediaType = MediaType.parseMediaType(detectedType);
                     }
@@ -359,7 +366,7 @@ public class DocumentServiceImpl implements DocumentService {
                 }
             }                
             if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
-                mediaType = guessMediaType(document.getFileName());            
+                mediaType = guessMediaType(resolvedPath.getFileName().toString());
             }
 
             ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
@@ -378,6 +385,56 @@ public class DocumentServiceImpl implements DocumentService {
         }
     }
 
+    private Path ensurePreviewPdf(Path filePath) {
+        String fileName = Optional.ofNullable(filePath.getFileName())
+                .map(Path::toString)
+                .map(String::trim)
+                .orElse("");
+        String lowerName = fileName.toLowerCase();
+        if (!lowerName.endsWith(".pptx") && !lowerName.endsWith(".xlsx")) {
+            return null;
+        }
+
+        Path outputDir = filePath.getParent();
+        if (outputDir == null) {
+            return null;
+        }
+        String baseName = fileName.substring(0, fileName.length() - 5);
+        Path previewPath = outputDir.resolve(baseName + ".preview.pdf");
+        if (Files.exists(previewPath)) {
+            return previewPath;
+        }
+
+        try {
+            ProcessBuilder builder = new ProcessBuilder(
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    outputDir.toString(),
+                    filePath.toString()
+            );
+            builder.redirectErrorStream(true);
+            Process process = builder.start();
+            if (process.waitFor() != 0) {
+                log.warn("PPTX/XLSX PDF 변환 실패: {}", filePath.getFileName());
+                return null;
+            }
+
+            Path converted = outputDir.resolve(baseName + ".pdf");
+            if (!Files.exists(converted)) {
+                log.warn("PPTX/XLSX PDF 변환 결과가 없습니다: {}", filePath.getFileName());
+                return null;
+            }
+            Files.move(converted, previewPath);
+            return previewPath;
+        } catch (Exception ex) {
+            log.warn("PPTX/XLSX PDF 변환 중 오류: {}", ex.getMessage());
+            return null;
+        }
+    }
+        
     private MediaType guessMediaType(String fileName) {
         String normalized = Optional.ofNullable(fileName).map(String::trim).orElse("").toLowerCase();
         if (normalized.endsWith(".pdf")) {
