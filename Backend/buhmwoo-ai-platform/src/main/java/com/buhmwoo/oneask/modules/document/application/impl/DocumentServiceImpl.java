@@ -362,10 +362,16 @@ public class DocumentServiceImpl implements DocumentService {
                 mediaType = guessMediaType(document.getFileName());            
             }
 
-            return ResponseEntity.ok()
+            ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                     .contentType(mediaType)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFilename)
-                    .body(resource);
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFilename);
+            try {
+                builder.contentLength(resource.contentLength());
+            } catch (IOException ex) {
+                log.debug("미리보기 콘텐츠 길이 계산 실패: {}", ex.getMessage());
+            }
+
+            return builder.body(resource);
         } catch (Exception e) {
             log.error("파일 미리보기 실패: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();

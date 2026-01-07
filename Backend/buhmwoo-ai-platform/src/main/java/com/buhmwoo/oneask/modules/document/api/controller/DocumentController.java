@@ -137,14 +137,40 @@ public class DocumentController {
             @ApiResponse(
                 responseCode = "200",
                 description = "파일 미리보기 성공",
-                content = @Content(
-                    mediaType = "application/octet-stream",
-                    schema = @Schema(type = "string", format = "binary")
-                )
+                content = {
+                    @Content(
+                        mediaType = MediaType.APPLICATION_PDF_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.IMAGE_JPEG_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.IMAGE_PNG_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.IMAGE_GIF_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.TEXT_PLAIN_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = "text/csv",
+                        schema = @Schema(type = "string", format = "binary")
+                    ),
+                    @Content(
+                        mediaType = MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                        schema = @Schema(type = "string", format = "binary")
+                    )
+                }                
             )
         }
     )
-    @GetMapping("/preview/{uuid}")
+    @GetMapping(value = "/preview/{uuid}", produces = MediaType.ALL_VALUE)
     public ResponseEntity<Resource> previewFileByUuid(@PathVariable String uuid) {
         return documentService.previewFileByUuid(uuid);
     }
