@@ -337,41 +337,11 @@ public class DocumentServiceImpl implements DocumentService {
                 return ResponseEntity.notFound().build();
             }
 
-            String encodedFilename = URLEncoder.encode(document.getFileName(), StandardCharsets.UTF_8)
-                    .replaceAll("\\+", "%20");
-            MediaType mediaType = MediaType.APPLICATION_OCTET_STREAM;
-            if (previewPath != null) {
-                mediaType = MediaType.APPLICATION_PDF;
-            }
-            if (previewPath == null) {
-                String storedContentType = Optional.ofNullable(document.getContentType())
-                        .map(String::trim)
-                        .orElse("");
-                if (StringUtils.hasText(storedContentType)) {
-                    try {
-                        mediaType = MediaType.parseMediaType(storedContentType);
-                    } catch (Exception ex) {
-                        log.debug("미리보기 저장된 콘텐츠 타입 파싱 실패: {}", ex.getMessage());
-                    }
-                }
-            }
-            if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
-                try {
-                    String detectedType = Files.probeContentType(resolvedPath);
-                    if (StringUtils.hasText(detectedType)) {
-                        mediaType = MediaType.parseMediaType(detectedType);
-                    }
-                } catch (Exception ex) {
-                    log.debug("미리보기 콘텐츠 타입 판별 실패: {}", ex.getMessage());            
-                }
-            }                
-            if (MediaType.APPLICATION_OCTET_STREAM.equals(mediaType)) {
-                mediaType = guessMediaType(resolvedPath.getFileName().toString());
-            }
+            String previewFilename = resolvedPath.getFileName().toString();            
 
             ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
-                    .contentType(mediaType)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFilename);
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + previewFilename + "\"");
             try {
                 builder.contentLength(resource.contentLength());
             } catch (IOException ex) {
@@ -434,7 +404,7 @@ public class DocumentServiceImpl implements DocumentService {
             return null;
         }
     }
-        
+
     private MediaType guessMediaType(String fileName) {
         String normalized = Optional.ofNullable(fileName).map(String::trim).orElse("").toLowerCase();
         if (normalized.endsWith(".pdf")) {
