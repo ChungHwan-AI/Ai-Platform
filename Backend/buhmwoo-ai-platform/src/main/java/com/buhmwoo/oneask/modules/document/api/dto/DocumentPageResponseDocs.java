@@ -7,12 +7,14 @@ import lombok.Setter;
 
 import java.util.List;
 
+
+
 /**
  * Swagger 예시 응답 작성을 위한 도우미 DTO입니다.
  */
 @Getter
 @Setter
-@Schema(description = "문서 목록 조회 응답 예시")
+@Schema(name = "DocumentPageResponse", description = "문서 목록 조회 응답 예시")
 public class DocumentPageResponseDocs {
 
     @Schema(description = "성공 여부", example = "true")
@@ -70,14 +72,14 @@ public class DocumentPageResponseDocs {
 
         @ArraySchema(
                 arraySchema = @Schema(description = "정렬 조건 목록"),
-                schema = @Schema(implementation = Order.class)
+                schema = @Schema(implementation = SortOrder.class)
         )
-        private List<Order> orders;   // ✅ 개별 정렬 조건들
+        private List<SortOrder> orders;   // ✅ 개별 정렬 조건들
 
         @Getter
         @Setter
-        @Schema(description = "단일 정렬 조건")
-        public static class Order {
+        @Schema(name = "DocumentSortOrder", description = "단일 정렬 조건")
+        public static class SortOrder {
 
             @Schema(description = "정렬 대상 컬럼", example = "uploadedAt")
             private String property;   // ✅ 정렬 대상 컬럼명

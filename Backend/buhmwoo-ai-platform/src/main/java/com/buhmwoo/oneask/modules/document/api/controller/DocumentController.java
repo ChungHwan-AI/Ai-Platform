@@ -170,7 +170,18 @@ public class DocumentController {
             )
         }
     )
-    @GetMapping(value = "/preview/{uuid}", produces = MediaType.ALL_VALUE)
+    @GetMapping(
+            value = "/preview/{uuid}",
+            produces = {
+                    MediaType.APPLICATION_PDF_VALUE,
+                    MediaType.IMAGE_JPEG_VALUE,
+                    MediaType.IMAGE_PNG_VALUE,
+                    MediaType.IMAGE_GIF_VALUE,
+                    MediaType.TEXT_PLAIN_VALUE,
+                    "text/csv",
+                    MediaType.APPLICATION_OCTET_STREAM_VALUE
+            }
+    )
     public ResponseEntity<Resource> previewFileByUuid(@PathVariable String uuid) {
         return documentService.previewFileByUuid(uuid);
     }
