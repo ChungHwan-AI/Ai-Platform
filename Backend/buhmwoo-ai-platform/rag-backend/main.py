@@ -2,6 +2,8 @@
 
 import logging
 import os
+import pytesseract
+from PIL import Image
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
