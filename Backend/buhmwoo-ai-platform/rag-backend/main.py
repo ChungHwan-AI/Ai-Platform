@@ -645,7 +645,39 @@ def _extract_text_xlsx(path: Path, max_rows_per_sheet: int = 2000) -> str:
     return "\n".join(out)
 
 
-SUPPORTED_EXTS = {".txt", ".csv", ".log", ".md", ".pdf", ".docx", ".pptx", ".xlsx"}
+SUPPORTED_EXTS = {
+    ".txt",
+    ".csv",
+    ".log",
+    ".md",
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+}
+
+def _extract_text_image(path: Path) -> str:
+    try:
+        image = Image.open(path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"이미지 파일을 열 수 없습니다: {exc}") from exc
+
+    try:
+        return pytesseract.image_to_string(image)
+    except pytesseract.TesseractNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="OCR 엔진(Tesseract)을 찾을 수 없습니다. 서버에 tesseract가 설치되어 있는지 확인하세요.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"이미지 OCR 처리 중 오류: {exc}") from exc
 
 def _iter_exception_chain(exc: Exception) -> List[Exception]:
     """예외 체인을 따라가며 원인 예외를 수집."""
@@ -758,6 +790,8 @@ def extract_text_by_ext(dst: Path, raw_content: bytes) -> str:
         return _extract_text_pptx(dst)
     if ext == ".xlsx":
         return _extract_text_xlsx(dst)
+    if ext in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}:
+        return _extract_text_image(dst)    
     raise HTTPException(status_code=400, detail=f"지원하지 않는 확장자: {ext}")
 
 

@@ -6,6 +6,8 @@ pymupdf
 python-docx
 python-pptx
 openpyxl
+pillow
+pytesseract
 chromadb==0.5.*
 langchain==0.3.*
 langchain-core==0.3.*
